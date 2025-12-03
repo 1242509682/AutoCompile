@@ -1,0 +1,164 @@
+﻿using Terraria;
+using TShockAPI;
+using TShockAPI.Hooks;
+using TerrariaApi.Server;
+using System.Reflection;
+
+namespace AutoCompile;
+
+[ApiVersion(2, 1)]
+public class AutoCompile : TerrariaPlugin
+{
+    #region 插件信息
+    public override string Name => "自动编译插件";
+    public override string Author => "羽学";
+    public override Version Version => new(1, 0, 0);
+    public override string Description => "使用指令自动编译CS为DLL";
+    #endregion
+
+    #region 注册卸载事件
+    public AutoCompile(Main game) : base(game) { }
+    public override void Initialize()
+    {
+        // 释放内嵌资源
+        ExtractData();
+        LoadCfg();
+        GeneralHooks.ReloadEvent += ReloadCfg;
+        TShockAPI.Commands.ChatCommands.Add(new Command("compile.use", Cmd.MainCmd, "cs"));
+    }
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing)
+        {
+            GeneralHooks.ReloadEvent -= ReloadCfg;
+            TShockAPI.Commands.ChatCommands.RemoveAll(x => x.CommandDelegate == Cmd.MainCmd);
+        }
+        base.Dispose(disposing);
+    }
+    #endregion
+
+    #region 内嵌资源管理
+    private void ExtractData()
+    {
+        if (!Directory.Exists(Configuration.Paths))
+            Directory.CreateDirectory(Configuration.Paths);
+
+        var CodePath = Path.Combine(Configuration.Paths, "源码");
+        if (!Directory.Exists(CodePath))
+            Directory.CreateDirectory(CodePath);
+
+        var OutPath = Path.Combine(Configuration.Paths, "编译输出");
+        if (!Directory.Exists(OutPath))
+            Directory.CreateDirectory(OutPath);
+
+        var AsmPath = Path.Combine(Configuration.Paths, "程序集");
+        if (!Directory.Exists(AsmPath))
+            Directory.CreateDirectory(AsmPath);
+
+        var asm = Assembly.GetExecutingAssembly();
+        var files = new List<string>
+        {
+            "Microsoft.CodeAnalysis.dll",
+            "Microsoft.CodeAnalysis.CSharp.dll",
+            "System.Collections.Immutable.dll",
+            "System.Reflection.Metadata.dll"
+        };
+
+        int count = 0;
+
+        foreach (var file in files)
+        {
+            var res = $"{asm.GetName().Name}.内嵌资源.{file}";
+
+            using (var stream = asm.GetManifestResourceStream(res))
+            {
+                if (stream == null)
+                {
+                    TShock.Log.ConsoleError($"[自动编译] 内嵌资源未找到: {res}");
+                    continue;
+                }
+                var tshockPath = typeof(TShock).Assembly.Location;
+                var USing = Path.Combine(tshockPath, "ServerPlugins");
+                var tarPath = Path.Combine(USing, file);
+
+                // 如果文件已存在，跳过（避免重复释放）
+                if (File.Exists(tarPath))
+                {
+                    count++;
+                    continue;
+                }
+
+                using (var fs = File.Create(tarPath))
+                {
+                    stream.CopyTo(fs);
+                }
+                count++;
+                TShock.Log.ConsoleInfo($"[自动编译] 释放: {file}");
+            }
+        }
+
+        ExtractData2(AsmPath, ref count);
+
+        TShock.Log.ConsoleInfo($"[自动编译] 初始化完成: {count}个文件");
+    }
+    #endregion
+
+    #region 程序集管理
+    private void ExtractData2(string AsmPath, ref int count)
+    {
+        var asm = Assembly.GetExecutingAssembly();
+        string assemblyName = asm.GetName().Name!;
+
+        // 遍历所有内嵌资源，只处理"程序集"文件夹中的资源
+        foreach (string res in asm.GetManifestResourceNames())
+        {
+            if (!res.StartsWith($"{assemblyName}.程序集."))
+                continue;
+
+            // 提取文件名（去掉"程序集名.程序集."前缀）
+            string fileName = res.Substring(assemblyName.Length + "程序集.".Length + 1);
+            string tarPath = Path.Combine(AsmPath, fileName);
+
+            // 如果文件已存在，跳过
+            if (File.Exists(tarPath))
+            {
+                count++;
+                continue;
+            }
+
+            // 确保目标文件的目录存在（处理可能的子目录）
+            Directory.CreateDirectory(Path.GetDirectoryName(tarPath)!);
+
+            using (var stream = asm.GetManifestResourceStream(res))
+            {
+                if (stream == null)
+                {
+                    TShock.Log.ConsoleError($"[自动编译] 内嵌资源未找到: {res}");
+                    continue;
+                }
+
+                using (var fs = File.Create(tarPath))
+                {
+                    stream.CopyTo(fs);
+                }
+
+                count++;
+            }
+        }
+    }
+    #endregion
+
+    #region 配置处理
+    internal static Configuration Config = new();
+    private static void ReloadCfg(ReloadEventArgs args)
+    {
+        LoadCfg();
+        args.Player?.SendSuccessMessage("[自动编译] 重载配置完成");
+    }
+    private static void LoadCfg()
+    {
+        Config = Configuration.Read();
+        Config.Write();
+    }
+    #endregion
+}

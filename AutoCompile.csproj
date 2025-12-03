@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+	<PropertyGroup>
+		<TargetFramework>net6.0</TargetFramework>
+		<ImplicitUsings>enable</ImplicitUsings>
+		<Nullable>enable</Nullable>
+		<GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+	</PropertyGroup>
+	<ItemGroup>
+	  <None Remove="内嵌资源\Microsoft.CodeAnalysis.CSharp.dll" />
+	  <None Remove="内嵌资源\Microsoft.CodeAnalysis.dll" />
+	  <None Remove="内嵌资源\System.Collections.Immutable.dll" />
+	  <None Remove="内嵌资源\System.Reflection.Metadata.dll" />
+	  <None Remove="程序集\Newtonsoft.Json.dll" />
+	</ItemGroup>
+	<ItemGroup>
+	  <EmbeddedResource Include="内嵌资源\Microsoft.CodeAnalysis.CSharp.dll" />
+	  <EmbeddedResource Include="内嵌资源\Microsoft.CodeAnalysis.dll" />
+	  <EmbeddedResource Include="内嵌资源\System.Collections.Immutable.dll" />
+	  <EmbeddedResource Include="内嵌资源\System.Reflection.Metadata.dll" />
+	  <EmbeddedResource Include="程序集\Newtonsoft.Json.dll" />
+	</ItemGroup>
+	<ItemGroup>
+		<NuGetAuditSuppress Include="https://github.com/advisories/GHSA-6qmf-mmc7-6c2p" />
+		<NuGetAuditSuppress Include="https://github.com/advisories/GHSA-68w7-72jg-6qpp" />
+		<NuGetAuditSuppress Include="https://github.com/advisories/GHSA-447r-wph3-92pm" />
+		<PackageReference Include="TShock" Version="5.2.1" />
+		<PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="5.0.0" />
+		<PackageReference Include="Microsoft.CodeAnalysis.Common" Version="5.0.0" />
+	</ItemGroup>
+</Project>
