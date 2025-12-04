@@ -3,6 +3,7 @@ using TShockAPI;
 using TShockAPI.Hooks;
 using TerrariaApi.Server;
 using System.Reflection;
+using System.Text;
 
 namespace AutoCompile;
 
@@ -12,7 +13,7 @@ public class AutoCompile : TerrariaPlugin
     #region 插件信息
     public override string Name => "自动编译插件";
     public override string Author => "羽学";
-    public override Version Version => new(1, 0, 0);
+    public override Version Version => new(1, 0, 1);
     public override string Description => "使用指令自动编译CS为DLL";
     #endregion
 
@@ -56,55 +57,43 @@ public class AutoCompile : TerrariaPlugin
             Directory.CreateDirectory(AsmPath);
 
         var asm = Assembly.GetExecutingAssembly();
+        // 依赖
         var files = new List<string>
         {
+            "System.Text.Encoding.CodePages.dll",
             "Microsoft.CodeAnalysis.dll",
             "Microsoft.CodeAnalysis.CSharp.dll",
             "System.Collections.Immutable.dll",
             "System.Reflection.Metadata.dll"
         };
 
-        int count = 0;
-
         foreach (var file in files)
         {
-            var res = $"{asm.GetName().Name}.内嵌资源.{file}";
+            var res = $"{asm.GetName().Name}.依赖项.{file}";
 
             using (var stream = asm.GetManifestResourceStream(res))
             {
-                if (stream == null)
-                {
-                    TShock.Log.ConsoleError($"[自动编译] 内嵌资源未找到: {res}");
-                    continue;
-                }
+                if (stream == null) continue;
                 var tshockPath = typeof(TShock).Assembly.Location;
                 var USing = Path.Combine(tshockPath, "ServerPlugins");
                 var tarPath = Path.Combine(USing, file);
 
                 // 如果文件已存在，跳过（避免重复释放）
-                if (File.Exists(tarPath))
-                {
-                    count++;
-                    continue;
-                }
+                if (File.Exists(tarPath)) continue;
 
                 using (var fs = File.Create(tarPath))
                 {
                     stream.CopyTo(fs);
                 }
-                count++;
-                TShock.Log.ConsoleInfo($"[自动编译] 释放: {file}");
             }
         }
 
-        ExtractData2(AsmPath, ref count);
-
-        TShock.Log.ConsoleInfo($"[自动编译] 初始化完成: {count}个文件");
+        ExtractData2(AsmPath);
     }
     #endregion
 
     #region 程序集管理
-    private void ExtractData2(string AsmPath, ref int count)
+    private void ExtractData2(string AsmPath)
     {
         var asm = Assembly.GetExecutingAssembly();
         string assemblyName = asm.GetName().Name!;
@@ -120,29 +109,20 @@ public class AutoCompile : TerrariaPlugin
             string tarPath = Path.Combine(AsmPath, fileName);
 
             // 如果文件已存在，跳过
-            if (File.Exists(tarPath))
-            {
-                count++;
-                continue;
-            }
+            if (File.Exists(tarPath)) continue;
 
             // 确保目标文件的目录存在（处理可能的子目录）
             Directory.CreateDirectory(Path.GetDirectoryName(tarPath)!);
 
             using (var stream = asm.GetManifestResourceStream(res))
             {
-                if (stream == null)
-                {
-                    TShock.Log.ConsoleError($"[自动编译] 内嵌资源未找到: {res}");
-                    continue;
-                }
+                if (stream == null) continue;
+                
 
                 using (var fs = File.Create(tarPath))
                 {
                     stream.CopyTo(fs);
                 }
-
-                count++;
             }
         }
     }

@@ -12,15 +12,22 @@ internal class Configuration
     [JsonProperty("启用", Order = 0)]
     public bool Enabled = true;
     [JsonProperty("包含子目录", Order = 3)]
-    public bool IncludeSub = true;  
+    public bool IncludeSub = true;
+    [JsonProperty("成功后清日志文件", Order = 4)]
+    public bool ClearLogs = true;
     [JsonProperty("语言版本", Order = 4)]
-    public string LangVer = "CSharp11";   
+    public string LangVer = "CSharp11";
     [JsonProperty("最大文件数", Order = 5)]
     public int MaxFiles = 100;  
     [JsonProperty("最大大小MB", Order = 6)]
     public int MaxSizeMB = 50;
-    [JsonProperty("默认添加引用", Order = 7)]
-    public List<string> DefaultUsings = new List<string>();
+    [JsonProperty("移除的using语句", Order = 7)]
+    public List<string> RemoveUsings = new List<string>();
+    [JsonProperty("默认给源码添加引用", Order = 8)]
+    public List<string> Usings = new List<string>();
+    [JsonProperty("系统程序集", Order = 9)]
+    public List<string> SystemAsse = new List<string>();
+
 
     #region 预设参数方法
     public void SetDefault()
@@ -33,32 +40,120 @@ internal class Configuration
            "【配置项说明】",
            "启用: 开关插件功能",
            "包含子目录: 是否扫描[源码]子目录中的.cs文件",
-           "语言版本: C#语言版本(CSharp8-CSharp11)",
+           "语言版本: C#语言版本(CSharp8-CSharp14)",
            "最大文件数: 单次编译最多处理文件数",
            "最大大小MB: 所有.cs文件总大小限制",
-           "默认添加引用: 为所有cs文件添加默认引用(已存在则不添加)",
+           "默认添加引用: 为所有cs文件添加默认引用" +
+           "(已存在则不添加,只需写命名空间自动添加using)",
            "注意：暂时不支持内嵌资源的插件生成",
         };
-        DefaultUsings = new List<string>()
+
+        RemoveUsings = new List<string>() 
         {
-            "using System;",
-            "using System.Collections;",
-            "using System.Collections.Generic;",
-            "using System.Linq;",
-            "using System.Text;",
-            "using System.Threading.Tasks;",
-            "using System.IO;",
-            "using System.IO.Streams;",
-            "using System.IO.Compression;",
-            "using System.Reflection;",
-            "using System.Diagnostics;",
-            "using System.Globalization;",
-            "using System.Security;",
-            "using System.Security.Cryptography;",
-            "using System.Net;",
-            "using System.Runtime.CompilerServices;",
-            "using System.Runtime.InteropServices;",
-            "using Microsoft.Xna.Framework;",
+            "using System.Security.Policy;",
+            "using Org.BouncyCastle.Asn1.Cmp;",
+            "using NuGet.Protocol.Plugins;",
+            "using static Org.BouncyCastle.Math.EC.ECCurve;",
+            "using static MonoMod.InlineRT.MonoModRule;",
+        };
+
+        Usings = new List<string>()
+        {
+            "System",
+            "System.Collections",
+            "System.Collections.Generic",
+            "System.Linq",
+            "System.Text",
+            "System.Threading",
+            "System.Threading.Tasks",
+            "System.IO",
+            "System.IO.Streams",
+            "System.IO.Compression",
+            "System.Reflection",
+            "System.Diagnostics",
+            "System.Globalization",
+            "System.Security",
+            "System.Security.Cryptography",
+            "System.Net",
+            "System.Net.Http",
+            "System.Runtime.CompilerServices",
+            "System.Runtime.InteropServices",
+            "Microsoft.Xna.Framework",
+        };
+
+        SystemAsse = new List<string>() 
+        { 
+            // 系统核心相关
+            "System.dll",
+            "System.Web.dll",
+            "System.Web.HttpUtility.dll",
+            "System.Net.dll",
+            "System.Net.Http.dll",
+            "System.Net.Requests.dll",
+            "System.Net.Primitives.dll",
+            "System.Private.CoreLib.dll",
+            "System.Private.Uri.dll",
+            "System.Runtime.dll",
+            "netstandard.dll",
+            "System.Core.dll",
+            "System.Private.Xml.Linq.dll",
+            "System.Diagnostics.TraceSource.dll",
+            
+            // 集合相关
+            "System.Collections.dll",
+            "System.Collections.Concurrent.dll",
+            "System.Collections.Immutable.dll",
+
+            // LinQ相关
+            "System.Linq.dll",
+            "System.Linq.Expressions.dll",
+            "System.Linq.Queryable.dll",
+
+            // IO
+            "System.IO.dll","System.IO.FileSystem.dll","System.IO.FileSystem.Primitives.dll",
+
+            // GZip
+            "System.IO.Compression.dll","System.IO.Compression.ZipFile.dll",
+
+            // 文本处理
+            "System.Text.Json.dll",
+            "System.Text.RegularExpressions.dll",
+            "System.Text.Encoding.dll",
+            "System.Text.Encoding.Extensions.dll",
+
+            // 异步和多线程
+            "System.Threading.dll",
+            "System.Threading.Tasks.dll",
+            "System.Threading.Tasks.Extensions.dll",
+            "System.Threading.Thread.dll",
+            "System.Threading.ThreadPool.dll",
+            "System.Runtime.Extensions.dll",
+            "System.Runtime.InteropServices.dll",
+            "System.Runtime.CompilerServices.Unsafe.dll",
+            "System.Runtime.Numerics.dll",
+            "System.ComponentModel.dll",
+            "System.ComponentModel.Primitives.dll",
+            "System.ComponentModel.TypeConverter.dll",
+            "System.Xml.ReaderWriter.dll",
+            "System.Memory.dll",
+            "System.Buffers.dll",
+            "System.Numerics.Vectors.dll",
+            "System.Reflection.dll",
+            "System.Reflection.Primitives.dll",
+            "System.Reflection.Extensions.dll",
+            "System.Reflection.Metadata.dll",
+            "System.Reflection.TypeExtensions.dll",
+            "System.ObjectModel.dll",
+            "System.Globalization.dll",
+            "System.Diagnostics.Debug.dll",
+            "System.Diagnostics.Tools.dll",
+            "System.Diagnostics.Tracing.dll",
+            "System.Diagnostics.Process.dll",
+            "System.AppContext.dll",
+            "System.Console.dll",
+            "System.Security.Cryptography.Algorithms.dll",
+            "System.Security.Cryptography.Primitives.dll",
+            "System.Security.Principal.dll",
         };
     }
     #endregion

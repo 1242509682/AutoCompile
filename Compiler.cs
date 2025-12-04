@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Reflection;
 using System.Text;
+using System.Text.RegularExpressions;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
@@ -35,13 +36,28 @@ internal class Compiler
 {
     private static readonly object LockObj = new();
     // 编译组类
-    private class CompilationGroup
+    public class CompilationGroup
     {
         public string Key { get; set; } = string.Empty;  // 根命名空间（分组键）
         public string FullNamespace { get; set; } = string.Empty;  // 完整的命名空间（第一个文件的）
         public List<SyntaxTree> Files { get; set; } = new List<SyntaxTree>();
         public HashSet<string> SubNamespaces { get; set; } = new HashSet<string>();  // 所有子命名空间
         public List<string> PublicClasses { get; set; } = new List<string>();  // 所有公共类
+    }
+
+    // 静态构造函数，只会执行一次
+    static Compiler()
+    {
+        try
+        {
+            // 修复中文编码用的
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+            TShock.Log.ConsoleInfo("【自动编译】 编码提供程序已注册");
+        }
+        catch (Exception ex)
+        {
+            TShock.Log.ConsoleWarn($"【自动编译】 注册编码提供程序失败: {ex.Message}");
+        }
     }
 
     #region 编译主方法
@@ -84,6 +100,7 @@ internal class Compiler
                 result = BuildAll(csFiles);
             }
 
+            // 停止计时
             sw.Stop();
 
             if (result.Ok)
@@ -100,7 +117,6 @@ internal class Compiler
         }
         catch (Exception ex)
         {
-            LogError($"编译异常: {ex}");
             return CompResult.Fail($"编译异常: {ex.Message}");
         }
     }
@@ -138,7 +154,6 @@ internal class Compiler
         }
         catch (Exception ex)
         {
-            LogError($"安全检查异常: {ex}");
             return CompResult.Fail($"安全检查异常: {ex.Message}");
         }
     }
@@ -152,40 +167,46 @@ internal class Compiler
             // 清理旧文件
             Cmd.CleanFiles();
 
-            var trees = new List<SyntaxTree>();
-            var refs = new HashSet<string>();
-            var skp = new List<string>();
-            var err = new List<string>();
+            var trees = new List<SyntaxTree>();  // 语法树列表
+            var refs = new HashSet<string>();    // 引用集合
+            var skp = new List<string>();        // 跳过文件列表
+            var err = new List<string>();        // 错误文件列表
 
             // 添加引用
             AddRefs(refs);
 
+            // 遍历所有文件
             foreach (var f in files)
             {
                 try
                 {
-                    var fi = new FileInfo(f);
-                    if (fi.Length == 0)
+                    var fi = new FileInfo(f);    // 文件信息
+                    if (fi.Length == 0)          // 空文件
                     {
                         skp.Add($"{Path.GetFileName(f)} (空)");
                         continue;
                     }
 
-                    var code = File.ReadAllText(f, Encoding.UTF8);
-                    if (string.IsNullOrWhiteSpace(code))
+                    var code = Utils.ReadAndFixFile(f);
+
+                    // 直接移除有问题的 using 语句
+                    code = RemoveUsings(code);
+
+                    if (string.IsNullOrWhiteSpace(code))  // 空白文件
                     {
                         skp.Add($"{Path.GetFileName(f)} (空白)");
                         continue;
                     }
 
-                    if (!IsValidCSharpCode(code))
+                    if (!IsValidCSharpCode(code))  // 无效C#代码
                     {
                         skp.Add($"{Path.GetFileName(f)} (无效)");
                         continue;
                     }
 
-                    var uc = AddUsingsIfNeeded(code);
+                    var uc = AddUsings(code);  // 添加using语句
 
+                    // 解析语法树
                     var tree = CSharpSyntaxTree.ParseText(
                         text: uc,
                         options: CSharpParseOptions.Default.WithLanguageVersion(GetLangVer()),
@@ -201,11 +222,13 @@ internal class Compiler
                 }
             }
 
+            // 记录跳过的文件
             if (skp.Count > 0 || err.Count > 0)
             {
                 LogSkip(skp, err);
             }
 
+            // 无有效文件
             if (trees.Count == 0)
             {
                 var msg = "无有效.cs文件";
@@ -216,6 +239,7 @@ internal class Compiler
                 return CompResult.Fail(msg);
             }
 
+            // 创建元数据引用
             var rfs = refs
                 .Where(File.Exists)
                 .Select(r => MetadataReference.CreateFromFile(r))
@@ -224,19 +248,20 @@ internal class Compiler
             if (rfs.Count == 0)
                 return CompResult.Fail("无有效引用");
 
+            // 分组编译
             var grps = Grouping(trees);
             var dlls = new List<string>();
 
             var outDir = Path.Combine(Configuration.Paths, "编译输出");
 
-            // 为每个组准备资源
+            // 遍历每个分组
             foreach (var g in grps)
             {
                 // 创建编译
                 var comp = CSharpCompilation.Create(
-                    Utils.CleanName(g.Key),
-                    g.Value.Files,
-                    rfs,
+                    Utils.CleanName(g.Key),  // 清理后的名称
+                    g.Value.Files,            // 分组文件
+                    rfs,                      // 引用
                     new CSharpCompilationOptions(
                         OutputKind.DynamicallyLinkedLibrary,
                         optimizationLevel: OptimizationLevel.Release,
@@ -248,96 +273,49 @@ internal class Compiler
                         concurrentBuild: true
                     ));
 
-                // 添加 .NET 6.0 目标框架特性
-                string Framework = @"[assembly: System.Runtime.Versioning.TargetFramework("".NET6.0"", FrameworkDisplayName = "".NET 6.0"")]";
+                // 添加目标框架特性 .NET 6.0
+                string fw = @"[assembly: System.Runtime.Versioning.TargetFramework("".NET6.0"", FrameworkDisplayName = "".NET 6.0"")]";
 
-                // 添加语言版本选项，与其他语法树保持一致
-                var frameworkTree = CSharpSyntaxTree.ParseText(Framework,
+                // 创建框架特性语法树
+                var fwTree = CSharpSyntaxTree.ParseText(fw,
                     options: CSharpParseOptions.Default.WithLanguageVersion(GetLangVer()),
                     encoding: Encoding.UTF8);
 
-                comp = comp.AddSyntaxTrees(frameworkTree);
+                comp = comp.AddSyntaxTrees(fwTree);  // 添加到编译
 
-                // 生成文件名
+                // 生成DLL文件名
                 string dllName;
-                var pn = GetPluginName(g.Value);
-                if (!string.IsNullOrEmpty(pn))
-                {
-                    dllName = $"{Utils.CleanName(pn)}.dll";
-                }
-                else
-                {
-                    dllName = $"{Utils.CleanName(g.Key)}.dll";
-                }
+                var pName = GetPluginName(g.Value);
+                dllName = $"{Utils.CleanName(pName)}.dll";
 
-                var dp = Path.Combine(outDir, dllName);
-                var pp = Path.ChangeExtension(dp, ".pdb");
+                var dllPath = Path.Combine(outDir, dllName);
+                var pdbPath = Path.ChangeExtension(dllPath, ".pdb");
 
                 // 编译
                 EmitResult er;
 
-                // 带PDB和资源的编译
-                using (var ds = File.Create(dp))
-                using (var ps = File.Create(pp))
+                // 带PDB输出
+                using (var dStream = File.Create(dllPath))
+                using (var pStream = File.Create(pdbPath))
                 {
-                    er = comp.Emit(ds, ps);
+                    er = comp.Emit(dStream, pStream);
                 }
 
+                // 编译失败处理
                 if (!er.Success)
                 {
-                    var sb = new StringBuilder();
-                    sb.AppendLine($"编译错误 [{g.Key}]:");
-
-                    var ers2 = er.Diagnostics
-                        .Where(d => d.Severity == DiagnosticSeverity.Error)
-                        .ToList();
-
-                    foreach (var e in ers2)
-                    {
-                        var loc = e.Location;
-                        if (loc.SourceTree != null)
-                        {
-                            var ls = loc.GetLineSpan();
-                            var fn = Path.GetFileName(loc.SourceTree.FilePath);
-
-                            sb.AppendLine($"  文件: {fn}");
-                            sb.AppendLine($"  行: {ls.StartLinePosition.Line + 1}");
-                            sb.AppendLine($"  列: {ls.StartLinePosition.Character + 1}");
-                            sb.AppendLine($"  错误: {e.GetMessage()}");
-                            sb.AppendLine();
-                        }
-                        else
-                        {
-                            sb.AppendLine($"  错误: {e.GetMessage()}");
-                        }
-                    }
-
-                    TShock.Log.Error(sb.ToString());
-                    return CompResult.Fail(sb.ToString());
+                    return ErrorMessMag.ErrorMess(g, er);
                 }
 
-                dlls.Add(dp);
+                // 编译成功，添加到结果列表
+                dlls.Add(dllPath);
 
-                LogCompile(g.Key, dp, pp);
+                // 记录编译日志
+                LogCompile(g.Key, dllPath, pdbPath);
             }
 
-            try
-            {
-                var m1 = GC.GetTotalMemory(false);
-                GC.Collect();
-                GC.WaitForPendingFinalizers();
-                GC.Collect();
-                var m2 = GC.GetTotalMemory(true);
-                var f = m1 - m2;
-                if (f > 1024 * 1024)
-                {
-                    TShock.Log.ConsoleInfo($"【自动编译】 GC释放 {f / 1024 / 1024:F2} MB");
-                }
-            }
-            catch (Exception ex)
-            {
-                TShock.Log.ConsoleWarn($"【自动编译】 GC异常: {ex.Message}");
-            }
+            // 编译成功后清理所有编译日志文件
+            ClearLogs();
 
             return CompResult.Success("编译完成", dlls);
         }
@@ -347,26 +325,87 @@ internal class Compiler
         }
         catch (Exception ex)
         {
-            LogError($"构建异常: {ex}");
             return CompResult.Fail($"构建失败: {ex.Message}");
+        }
+        finally
+        {
+            // 无论成功失败 只要结束就尝试进行垃圾回收
+            try
+            {
+                var mem1 = GC.GetTotalMemory(false);
+                GC.Collect(GC.MaxGeneration, GCCollectionMode.Forced, true, true);
+                GC.WaitForPendingFinalizers();
+                GC.Collect(GC.MaxGeneration, GCCollectionMode.Forced, true, true);
+                var mem2 = GC.GetTotalMemory(true);
+                var freed = mem1 - mem2;
+                if (freed > 1024 * 1024)  // 释放超过1MB
+                {
+                    TShock.Log.ConsoleInfo($"【自动编译】GC释放内存 {freed / 1024 / 1024:F2} MB");
+                }
+            }
+            catch (Exception ex)
+            {
+                TShock.Log.ConsoleWarn($"【自动编译】内存清理异常: {ex.Message}");
+            }
+        }
+    }
+    #endregion
+
+    #region 编译成功后清理日志文件
+    private static void ClearLogs()
+    {
+        // 检查配置是否启用清理
+        if (!AutoCompile.Config.ClearLogs) return;
+
+        try
+        {
+            var logDir = Path.Combine(Configuration.Paths, "编译日志");
+            if (!Directory.Exists(logDir))
+                return;
+
+            // 获取所有日志文件
+            var logFiles = Directory.GetFiles(logDir, "*.txt", SearchOption.AllDirectories);
+            if (logFiles.Length == 0)
+                return;
+
+            int count = 0;
+            foreach (var logFile in logFiles)
+            {
+                File.Delete(logFile);
+                count++;
+            }
+
+            if (count > 0)
+            {
+                TShock.Log.ConsoleInfo($"【自动编译】 清理了 {count} 个编译日志文件");
+            }
+        }
+        catch (Exception ex)
+        {
+            TShock.Log.ConsoleWarn($"【自动编译】 清理编译日志失败: {ex.Message}");
         }
     }
     #endregion
 
     #region 为代码添加默认 using
-    private static string AddUsingsIfNeeded(string code)
+    private static string AddUsings(string code)
     {
         if (string.IsNullOrWhiteSpace(code))
             return code;
 
         // 从配置中获取默认 using 指令
-        var Default = string.Join("\n", AutoCompile.Config.DefaultUsings) + "\n";
+        // 从配置获取并格式化
+        var defList = AutoCompile.Config.Usings;
+        var fmtUsgs = FmtUsings(defList);
+
+        if (string.IsNullOrEmpty(fmtUsgs))
+            return code;
 
         // 检查代码中是否已经有这些 using（避免重复）
-        var existing = ExtractExistingUsings(code);
+        var existing = GetExistUsings(code);
 
         // 过滤掉已经存在的 using
-        var ToAdd = FilterDuplicateUsings(Default, existing);
+        var ToAdd = FilterUsings(fmtUsgs, existing);
 
         if (string.IsNullOrEmpty(ToAdd))
             return code;
@@ -376,8 +415,39 @@ internal class Compiler
     }
     #endregion
 
+    #region 格式化 using
+    private static string FmtUsings(List<string> usgs)
+    {
+        if (usgs == null || usgs.Count == 0)
+            return string.Empty;
+
+        var sb = new StringBuilder();
+
+        foreach (var usg in usgs)
+        {
+            if (string.IsNullOrWhiteSpace(usg))
+                continue;
+
+            var trim = usg.Trim();
+
+            // 已完整
+            if (trim.StartsWith("using ") && trim.EndsWith(";"))
+            {
+                sb.AppendLine(trim);
+            }
+            // 需补充
+            else
+            {
+                sb.AppendLine($"using {trim};");
+            }
+        }
+
+        return sb.ToString();
+    }
+    #endregion
+
     #region 提取代码中已有的 using 指令
-    private static List<string> ExtractExistingUsings(string code)
+    private static List<string> GetExistUsings(string code)
     {
         var usings = new List<string>();
 
@@ -412,9 +482,9 @@ internal class Compiler
     #endregion
 
     #region 过滤掉重复的 using
-    private static string FilterDuplicateUsings(string defaultUsings, List<string> existings)
+    private static string FilterUsings(string fmtUsgs, List<string> exist)
     {
-        var lines = defaultUsings.Split('\n');
+        var lines = fmtUsgs.Split('\n');
         var result = new StringBuilder();
 
         foreach (var line in lines)
@@ -422,19 +492,88 @@ internal class Compiler
             if (string.IsNullOrWhiteSpace(line))
                 continue;
 
-            var trimmed = line.Trim();
+            var trim = line.Trim();
 
-            // 检查是否已经存在相同的 using
-            bool exists = existings.Any(existing =>
-                string.Equals(existing.Trim(), trimmed, StringComparison.OrdinalIgnoreCase));
+            // 取命名空间部分
+            string nsOnly = GetNs(trim);
 
-            if (!exists)
-            {
-                result.AppendLine(trimmed);
-            }
+            // 查重复
+            bool existFlag = exist.Any(ex =>
+                SameNs(ex.Trim(), trim) || SameNs(ex.Trim(), nsOnly));
+
+            if (!existFlag)
+                result.AppendLine(trim);
         }
 
         return result.ToString();
+    }
+
+    // 取命名空间
+    private static string GetNs(string usgStmt)
+    {
+        if (string.IsNullOrWhiteSpace(usgStmt))
+            return string.Empty;
+
+        var trim = usgStmt.Trim();
+
+        if (trim.StartsWith("using "))
+            trim = trim.Substring(6);
+
+        if (trim.EndsWith(";"))
+            trim = trim.Substring(0, trim.Length - 1);
+
+        return trim.Trim();
+    }
+
+    // 比命名空间
+    private static bool SameNs(string ex, string now)
+    {
+        var exNs = GetNs(ex);
+        var nowNs = GetNs(now);
+
+        return string.Equals(exNs, nowNs, StringComparison.OrdinalIgnoreCase);
+    }
+    #endregion
+
+    #region 移除指定Using语句
+    private static string RemoveUsings(string code)
+    {
+        var rm = AutoCompile.Config.RemoveUsings;
+        if (rm == null || rm.Count == 0) return code;
+
+        // 简单的移除逻辑：直接替换为空
+        foreach (var to in rm)
+        {
+            if (string.IsNullOrWhiteSpace(to))
+                continue;
+
+            // 精确移除整行
+            string pattern = @"^\s*" + Regex.Escape(to.Trim()) + @"\s*\r?\n";
+            code = Regex.Replace(code, pattern, "", RegexOptions.Multiline);
+
+            // 如果是文件最后一行的情况
+            pattern = @"^\s*" + Regex.Escape(to.Trim()) + @"\s*$";
+            code = Regex.Replace(code, pattern, "", RegexOptions.Multiline);
+        }
+
+        return code;
+    }
+    #endregion
+
+    #region 获取C#版本号 .net 6对应的是CSharp11
+    private static LanguageVersion GetLangVer()
+    {
+        return AutoCompile.Config.LangVer switch
+        {
+            "CSharp8" => LanguageVersion.CSharp8,
+            "CSharp9" => LanguageVersion.CSharp9,
+            "CSharp10" => LanguageVersion.CSharp10,
+            "CSharp11" => LanguageVersion.CSharp11,
+            "CSharp12" => LanguageVersion.CSharp12,
+            "CSharp13" => LanguageVersion.CSharp13,
+            "CSharp14" => LanguageVersion.CSharp14,
+            _ => LanguageVersion.Latest
+        };
     }
     #endregion
 
@@ -453,7 +592,7 @@ internal class Compiler
             // 但会包含诊断信息
             var diagnostics = tree.GetDiagnostics();
 
-            // 如果没有严重错误（则认为无效)
+            // 如果没有严重错误（则认为可用)
             return !diagnostics.Any(d => d.Severity == DiagnosticSeverity.Error);
         }
         catch
@@ -537,13 +676,13 @@ internal class Compiler
         TShock.Log.ConsoleInfo($"【自动编译】 分组情况 (共{groups.Count}组):");
         foreach (var group in groups)
         {
-            var subNs = group.Value.SubNamespaces;
-            TShock.Log.ConsoleInfo($"根命名空间 '{group.Key}': {group.Value.Files.Count} 个文件");
-            TShock.Log.ConsoleInfo($"子命名空间: {string.Join(", ", subNs)}");
-
+            TShock.Log.ConsoleInfo($"【命名空间】 '{group.Key}': {group.Value.Files.Count} 个文件");
+            // 添加索引，从1开始
+            int idx = 1;
             foreach (var file in group.Value.Files)
             {
-                TShock.Log.ConsoleInfo($"- {Path.GetFileName(file.FilePath)}");
+                TShock.Log.ConsoleInfo($"{idx}.{Path.GetFileName(file.FilePath)}");
+                idx++;
             }
         }
 
@@ -588,85 +727,32 @@ internal class Compiler
     {
         try
         {
+            int added = 0;
+
             // 获取.NET运行时的系统程序集目录
-            var runtimeDir = Path.GetDirectoryName(typeof(object).Assembly.Location);
-            if (!string.IsNullOrEmpty(runtimeDir))
+            var runtime = Path.GetDirectoryName(typeof(object).Assembly.Location);
+
+            if (!string.IsNullOrEmpty(runtime))
             {
-                var Assemblies = new[]
+                var Asse = AutoCompile.Config.SystemAsse;
+
+                foreach (var ass in Asse)
                 {
-                    // 核心程序集
-                     "System.dll",
-                     "System.Private.CoreLib.dll",
-                     "System.Runtime.dll",
-                     "netstandard.dll",
+                    var file = Path.Combine(runtime, ass);
 
-                     // 集合相关
-                     "System.Collections.dll",
-                     "System.Collections.Concurrent.dll",
-                     "System.Collections.Immutable.dll",
-                     // LinQ相关
-                     "System.Linq.dll",
-                     "System.Linq.Expressions.dll",
-                     "System.Linq.Queryable.dll",
-
-                     // IO
-                     "System.IO.dll",
-                     "System.IO.FileSystem.dll",
-                     "System.IO.FileSystem.Primitives.dll",
-
-                     // GZip
-                     "System.IO.Compression.dll",
-                     "System.IO.Compression.ZipFile.dll",
-
-                     // 文本处理
-                     "System.Text.RegularExpressions.dll",
-                     "System.Text.Encoding.dll",
-                     "System.Text.Encoding.Extensions.dll",
-
-                      // 异步和多线程
-                     "System.Threading.dll",
-                     "System.Threading.Tasks.dll",
-                     "System.Threading.Tasks.Extensions.dll",
-                     "System.Threading.Thread.dll",
-                     "System.Threading.ThreadPool.dll",
-
-                     "System.Runtime.Extensions.dll",
-                     "System.Runtime.InteropServices.dll",
-                     "System.Runtime.CompilerServices.Unsafe.dll",
-                     "System.Runtime.Numerics.dll",
-                     "System.ComponentModel.dll",
-                     "System.ComponentModel.Primitives.dll",
-                     "System.ComponentModel.TypeConverter.dll",
-                     "System.Net.Http.dll",
-                     "System.Xml.ReaderWriter.dll",
-                     "System.Memory.dll",
-                     "System.Buffers.dll",
-                     "System.Numerics.Vectors.dll",
-                     "System.Reflection.dll",
-                     "System.Reflection.Primitives.dll",
-                     "System.Reflection.Extensions.dll",
-                     "System.Reflection.Metadata.dll",
-                     "System.Reflection.TypeExtensions.dll",
-                     "System.ObjectModel.dll",
-                     "System.Globalization.dll",
-                     "System.Diagnostics.Debug.dll",
-                     "System.Diagnostics.Tools.dll",
-                     "System.Diagnostics.Tracing.dll",
-                     "System.AppContext.dll",
-                     "System.Console.dll",
-                     "System.Security.Cryptography.Algorithms.dll",
-                     "System.Security.Cryptography.Primitives.dll",
-                     "System.Security.Principal.dll",
-                };
-
-                foreach (var assembly in Assemblies)
-                {
-                    var fullPath = Path.Combine(runtimeDir, assembly);
-                    if (File.Exists(fullPath) && !refs.Contains(fullPath))
+                    if (File.Exists(file) && !refs.Contains(file))
                     {
-                        refs.Add(fullPath);
+                        refs.Add(file);
+                        added++;
+                    }
+                    else
+                    {
+                        TShock.Log.ConsoleError($"【自动编译】 文件不存在 {file} ");
                     }
                 }
+
+                if (added > 0)
+                    TShock.Log.ConsoleInfo($"【自动编译】 添加了 {added} 个系统程序集");
             }
         }
         catch (Exception ex)
@@ -689,40 +775,32 @@ internal class Compiler
                 var dllFiles = Directory.GetFiles(dir, "*.dll", SearchOption.AllDirectories);
                 foreach (var dllPath in dllFiles)
                 {
-                    try
+                    // 确保文件存在且不是重复的
+                    if (File.Exists(dllPath) && !refs.Contains(dllPath))
                     {
-                        // 确保文件存在且不是重复的
-                        if (File.Exists(dllPath) && !refs.Contains(dllPath))
+                        // 跳过可能损坏或无法加载的DLL
+                        if (IsValidAssembly(dllPath))
                         {
-                            // 跳过可能损坏或无法加载的DLL
-                            if (IsValidAssembly(dllPath))
-                            {
-                                refs.Add(dllPath);
-                                count++;
-                            }
-                            else
-                            {
-                                TShock.Log.ConsoleWarn($"【自动编译】 跳过无效的程序集: {Path.GetFileName(dllPath)}");
-                            }
+                            refs.Add(dllPath);
+                            count++;
                         }
-                    }
-                    catch (Exception ex)
-                    {
-                        TShock.Log.ConsoleWarn($"【自动编译】 处理程序集失败 {Path.GetFileName(dllPath)}: {ex.Message}");
+                        else
+                        {
+                            TShock.Log.ConsoleWarn($"【自动编译】 跳过无效的程序集: {Path.GetFileName(dllPath)}");
+                        }
                     }
                 }
             }
 
             if (count > 0)
-                TShock.Log.ConsoleInfo($"【自动编译】 从程序集文件夹添加了 {count} 个引用");
+                TShock.Log.ConsoleInfo($"【自动编译】 从‘程序集’添加了 {count} 个引用");
 
             // 2.添加TShockAPI.dll
-            var PluginsDir = GetPluginsDir();
+            var PluginsDir = Path.Combine(typeof(TShock).Assembly.Location, "ServerPlugins");
             var path2 = Path.Combine(PluginsDir, "TShockAPI.dll");
             if (File.Exists(path2) && !refs.Contains(path2))
             {
                 refs.Add(path2);
-                TShock.Log.ConsoleInfo($"【自动编译】 添加关键ServerPlugins文件: {"TShockAPI.dll"}");
             }
 
             // 3.添加TS运行核心文件（从bin目录）
@@ -737,12 +815,11 @@ internal class Compiler
 
             foreach (var f in OT)
             {
-                var binDir = GetBinDir();
+                var binDir = Path.Combine(typeof(TShock).Assembly.Location, "bin");
                 var path3 = Path.Combine(binDir, f);
                 if (File.Exists(path3) && !refs.Contains(path3))
                 {
                     refs.Add(path3);
-                    TShock.Log.ConsoleInfo($"【自动编译】 添加关键bin文件: {f}");
                 }
             }
 
@@ -760,8 +837,8 @@ internal class Compiler
         try
         {
             // 尝试加载程序集来验证其有效性
-            var assemblyName = AssemblyName.GetAssemblyName(assemblyPath);
-            return assemblyName != null;
+            var name = AssemblyName.GetAssemblyName(assemblyPath);
+            return name != null;
         }
         catch (BadImageFormatException)
         {
@@ -781,83 +858,70 @@ internal class Compiler
     }
     #endregion
 
-    #region 路径查找方法
-    public static string GetBinDir()
+    #region 提取插件名称
+    private static string GetPluginName(CompilationGroup group)
     {
-        // 方法1: 从TShockAPI.dll位置推断bin目录
-        var tshockPath = typeof(TShockAPI.TShock).Assembly.Location;
-        if (!string.IsNullOrEmpty(tshockPath))
+        try
         {
-            // TShockAPI.dll 在 ServerPlugins 文件夹中
-            var PluginsDir = Path.GetDirectoryName(tshockPath);
-            if (!string.IsNullOrEmpty(PluginsDir))
+            // 遍历组中的所有文件，查找插件信息
+            foreach (var tree in group.Files)
             {
-                // bin 目录在 serverPlugins 的上级目录
-                var parentDir = Directory.GetParent(PluginsDir);
-                if (parentDir != null)
+                var root = tree.GetRoot();
+
+                // 查找继承自TerrariaPlugin的主类
+                var MainClass = root.DescendantNodes()
+                    .OfType<ClassDeclarationSyntax>()
+                    .FirstOrDefault(cls => cls.BaseList?.Types
+                        .Any(t => t.Type.ToString().Contains("TerrariaPlugin")) == true);
+
+                if (MainClass != null)
                 {
-                    var binPath = Path.Combine(parentDir.FullName, "bin");
-                    if (Directory.Exists(binPath))
+                    // 查找Name属性
+                    var nameProp = MainClass.DescendantNodes()
+                        .OfType<PropertyDeclarationSyntax>()
+                        .FirstOrDefault(p => p.Identifier.Text == "Name");
+
+                    // 提取插件名称
+                    if (nameProp is null) continue;
+
+                    string name = NameFromProperty(nameProp, MainClass);
+
+                    if (!string.IsNullOrEmpty(name))
                     {
-                        TShock.Log.ConsoleInfo($"【自动编译】 找到bin目录: {binPath}");
-                        return binPath;
+                        TShock.Log.ConsoleInfo($"【自动编译】 在{Path.GetFileName(tree.FilePath)}中获取到插件名: {name}");
+                        return name;
                     }
                 }
             }
         }
-
-        // 方法2: 从当前程序集位置推断
-        var asmLoc = Assembly.GetExecutingAssembly().Location;
-        if (!string.IsNullOrEmpty(asmLoc))
+        catch (Exception ex)
         {
-            var dir = Path.GetDirectoryName(asmLoc);
-            var cur = new DirectoryInfo(dir);
-
-            while (cur != null)
-            {
-                var binPath = Path.Combine(cur.FullName, "bin");
-                if (Directory.Exists(binPath))
-                    return binPath;
-
-                cur = cur.Parent;
-            }
+            TShock.Log.ConsoleWarn($"【自动编译】 提取插件信息失败: {ex.Message}");
         }
 
-        // 如果找不到，使用默认路径
-        return Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "bin");
+        return string.Empty;
     }
 
-    // 获取ServerPlugins目录
-    public static string GetPluginsDir()
+    // 从属性中提取名称
+    private static string NameFromProperty(PropertyDeclarationSyntax prop, ClassDeclarationSyntax cls)
     {
-        var tshockPath = typeof(TShockAPI.TShock).Assembly.Location;
+        if (prop == null) return cls.Identifier.Text;
 
-        if (!string.IsNullOrEmpty(tshockPath))
+        // 箭头函数形式
+        if (prop.ExpressionBody?.Expression is LiteralExpressionSyntax literal)
         {
-            var PluginsDir = Path.GetDirectoryName(tshockPath);
-            if (Directory.Exists(PluginsDir))
-            {
-                return PluginsDir;
-            }
+            return literal.Token.ValueText;
         }
 
-        // 如果找不到，使用默认路径
-        return Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "ServerPlugins");
-    }
-    #endregion
-
-    #region 获取C#版本号 .net 6对应的是CSharp11
-    private static LanguageVersion GetLangVer()
-    {
-        return AutoCompile.Config.LangVer switch
+        // Getter形式
+        var getter = prop.AccessorList?.Accessors.FirstOrDefault(a => a.Keyword.Text == "get");
+        if (getter?.Body?.Statements.FirstOrDefault() is ReturnStatementSyntax Stmt &&
+            Stmt.Expression is LiteralExpressionSyntax Expr)
         {
-            "CSharp8" => LanguageVersion.CSharp8,
-            "CSharp9" => LanguageVersion.CSharp9,
-            "CSharp10" => LanguageVersion.CSharp10,
-            "CSharp11" => LanguageVersion.CSharp11,
-            "CSharp12" => LanguageVersion.CSharp12,
-            _ => LanguageVersion.Latest
-        };
+            return Expr.Token.ValueText;
+        }
+
+        return cls.Identifier.Text;
     }
     #endregion
 
@@ -916,89 +980,12 @@ internal class Compiler
 
             log.AppendLine();
 
-            TShock.Log.ConsoleInfo(log.ToString());
+            TShock.Log.Info(log.ToString());
         }
         catch (Exception ex)
         {
             TShock.Log.ConsoleError($"【自动编译】 记录跳过文件日志失败: {ex.Message}");
         }
-    }
-
-    private static void LogError(string error)
-    {
-        try
-        {
-            TShock.Log.ConsoleError($"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] {error}\n");
-        }
-        catch (Exception ex)
-        {
-            TShock.Log.ConsoleError($"【自动编译】 记录错误日志失败: {ex.Message}");
-        }
-    }
-    #endregion
-
-    #region 提取插件名称
-    private static string GetPluginName(CompilationGroup group)
-    {
-        try
-        {
-            // 遍历组中的所有文件，查找插件信息
-            foreach (var tree in group.Files)
-            {
-                var root = tree.GetRoot();
-
-                // 查找继承自TerrariaPlugin的类
-                var pluginClass = root.DescendantNodes()
-                    .OfType<ClassDeclarationSyntax>()
-                    .FirstOrDefault(cls => cls.BaseList?.Types
-                        .Any(t => t.Type.ToString().Contains("TerrariaPlugin")) == true);
-
-                if (pluginClass != null)
-                {
-                    // 查找Name属性
-                    var nameProp = pluginClass.DescendantNodes()
-                        .OfType<PropertyDeclarationSyntax>()
-                        .FirstOrDefault(p => p.Identifier.Text == "Name");
-
-                    // 提取插件名称
-                    string name = NameFromProperty(nameProp, pluginClass);
-
-                    if (!string.IsNullOrEmpty(name))
-                    {
-                        TShock.Log.ConsoleInfo($"【自动编译】 在 {Path.GetFileName(tree.FilePath)} 中找到插件: {name}");
-                        return name;
-                    }
-                }
-            }
-        }
-        catch (Exception ex)
-        {
-            TShock.Log.ConsoleWarn($"【自动编译】 提取插件信息失败: {ex.Message}");
-        }
-
-        return null;
-    }
-
-    // 从属性中提取名称
-    private static string NameFromProperty(PropertyDeclarationSyntax prop, ClassDeclarationSyntax cls)
-    {
-        if (prop == null) return cls.Identifier.Text;
-
-        // 箭头函数形式
-        if (prop.ExpressionBody?.Expression is LiteralExpressionSyntax literal)
-        {
-            return literal.Token.ValueText;
-        }
-
-        // Getter形式
-        var getter = prop.AccessorList?.Accessors.FirstOrDefault(a => a.Keyword.Text == "get");
-        if (getter?.Body?.Statements.FirstOrDefault() is ReturnStatementSyntax Stmt &&
-            Stmt.Expression is LiteralExpressionSyntax Expr)
-        {
-            return Expr.Token.ValueText;
-        }
-
-        return cls.Identifier.Text;
     }
     #endregion
 }

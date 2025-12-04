@@ -6,18 +6,31 @@
 		<GenerateAssemblyInfo>false</GenerateAssemblyInfo>
 	</PropertyGroup>
 	<ItemGroup>
-	  <None Remove="内嵌资源\Microsoft.CodeAnalysis.CSharp.dll" />
-	  <None Remove="内嵌资源\Microsoft.CodeAnalysis.dll" />
-	  <None Remove="内嵌资源\System.Collections.Immutable.dll" />
-	  <None Remove="内嵌资源\System.Reflection.Metadata.dll" />
-	  <None Remove="程序集\Newtonsoft.Json.dll" />
+	  <None Remove="程序集\BCrypt.Net-Next.dll" />
+	  <None Remove="程序集\GetText.dll" />
+	  <None Remove="程序集\NuGet.Packaging.dll" />
 	</ItemGroup>
 	<ItemGroup>
-	  <EmbeddedResource Include="内嵌资源\Microsoft.CodeAnalysis.CSharp.dll" />
-	  <EmbeddedResource Include="内嵌资源\Microsoft.CodeAnalysis.dll" />
-	  <EmbeddedResource Include="内嵌资源\System.Collections.Immutable.dll" />
-	  <EmbeddedResource Include="内嵌资源\System.Reflection.Metadata.dll" />
+	  <EmbeddedResource Include="程序集\MonoMod.RuntimeDetour.dll" />
+	</ItemGroup>
+	<ItemGroup>
+	  <EmbeddedResource Include="依赖项\Microsoft.CodeAnalysis.CSharp.dll" />
+	  <EmbeddedResource Include="依赖项\Microsoft.CodeAnalysis.dll" />
+	  <EmbeddedResource Include="依赖项\System.Collections.Immutable.dll" />
+	  <EmbeddedResource Include="依赖项\System.Reflection.Metadata.dll" />
+	  <EmbeddedResource Include="依赖项\System.Text.Encoding.CodePages.dll" />
+	  <EmbeddedResource Include="程序集\BCrypt.Net-Next.dll" />
+	  <EmbeddedResource Include="程序集\GetText.dll" />
+	  <EmbeddedResource Include="程序集\IP2Region.Net.dll" />
+	  <EmbeddedResource Include="程序集\Microsoft.Data.Sqlite.dll" />
+	  <EmbeddedResource Include="程序集\MySql.Data.dll" />
 	  <EmbeddedResource Include="程序集\Newtonsoft.Json.dll" />
+	  <EmbeddedResource Include="程序集\NuGet.Packaging.dll" />
+	  <EmbeddedResource Include="程序集\System.Data.Common.dll" />
+	  <EmbeddedResource Include="程序集\System.Drawing.Common.dll" />
+	  <EmbeddedResource Include="程序集\System.Drawing.Primitives.dll" />
+	  <EmbeddedResource Include="程序集\System.Threading.Tasks.Parallel.dll" />
+	  <EmbeddedResource Include="程序集\Z.Expressions.Eval.dll" />
 	</ItemGroup>
 	<ItemGroup>
 		<NuGetAuditSuppress Include="https://github.com/advisories/GHSA-6qmf-mmc7-6c2p" />

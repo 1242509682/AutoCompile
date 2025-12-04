@@ -107,7 +107,7 @@ internal class Cmd
         plr.SendSuccessMessage($"已{(enabled ? "开启" : "关闭")}插件");
     }
     #endregion
-    
+
     #region 配置命令
     private static void ShowCfg(TSPlayer plr)
     {
@@ -119,17 +119,16 @@ internal class Cmd
         {
             var cfg = AutoCompile.Config;
             var msg = new StringBuilder();
-            
+
             msg.AppendLine("当前配置:");
             msg.AppendLine($"  启用: {(cfg.Enabled ? "是" : "否")}");
+            msg.AppendLine($"  语言版本: {cfg.LangVer}");
             msg.AppendLine($"  源码路径: {CodePath}");
             msg.AppendLine($"  引用路径: {AsmPath}");
             msg.AppendLine($"  输出路径: {OutPath}");
             msg.AppendLine($"  包含子目录: {(cfg.IncludeSub ? "是" : "否")}");
-            msg.AppendLine($"  语言版本: {cfg.LangVer}");
             msg.AppendLine($"  最大文件: {cfg.MaxFiles}");
             msg.AppendLine($"  最大大小: {cfg.MaxSizeMB}MB");
-
             plr.SendMessage(msg.ToString(), color2);
         }
         catch (Exception ex)
@@ -138,7 +137,7 @@ internal class Cmd
         }
     }
     #endregion
-    
+
     #region 显示文件
     private static void ShowFiles(TSPlayer plr)
     {
@@ -190,7 +189,7 @@ internal class Cmd
         {
             var srcPath = Path.Combine(Configuration.Paths, "源码");
             var outPath = Path.Combine(Configuration.Paths, "编译输出");
-            var binPath = Compiler.GetBinDir();
+            var binPath = Path.Combine(typeof(TShock).Assembly.Location, "bin");
 
             var msg = new StringBuilder();
             msg.AppendLine($"源码路径: {srcPath}");
