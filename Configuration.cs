@@ -13,25 +13,24 @@ internal class Configuration
     public bool Enabled = true;
     [JsonProperty("包含子目录", Order = 1)]
     public bool IncludeSub = true;
-    [JsonProperty("编译失败日志显示英文", Order = 2)]
+    [JsonProperty("智能修复重试次数", Order = 2)]
+    public int RetryCount = 3;
+    [JsonProperty("编译失败日志显示英文", Order = 3)]
     public bool ShowErrorEnglish { get; set; } = true;
-    [JsonProperty("编译失败日志显示中文", Order = 3)]
+    [JsonProperty("编译失败日志显示中文", Order = 4)]
     public bool ShowErrorChinese { get; set; } = true;
-    [JsonProperty("成功后清失败日志文件", Order = 4)]
+    [JsonProperty("成功后清失败日志文件", Order = 5)]
     public bool ClearLogs = true;
-    [JsonProperty("语言版本", Order = 4)]
+    [JsonProperty("语言版本", Order = 6)]
     public string LangVer = "CSharp11";
-    [JsonProperty("最大文件数", Order = 5)]
-    public int MaxFiles = 100;  
-    [JsonProperty("最大大小MB", Order = 6)]
+    [JsonProperty("最大文件数", Order = 7)]
+    public int MaxFiles = 100;
+    [JsonProperty("最大大小MB", Order = 8)]
     public int MaxSizeMB = 50;
-    [JsonProperty("移除的using语句", Order = 7)]
-    public List<string> RemoveUsings = new List<string>();
-    [JsonProperty("默认给源码添加引用", Order = 8)]
+    [JsonProperty("默认给源码添加引用", Order = 9)]
     public List<string> Usings = new List<string>();
-    [JsonProperty("系统程序集", Order = 9)]
+    [JsonProperty("系统程序集", Order = 10)]
     public List<string> SystemAsse = new List<string>();
-
 
     #region 预设参数方法
     public void SetDefault()
@@ -49,16 +48,13 @@ internal class Configuration
            "最大大小MB: 所有.cs文件总大小限制",
            "默认添加引用: 为所有cs文件添加默认引用" +
            "(已存在则不添加,只需写命名空间自动添加using)",
+            "【智能修复】",
+           "当编译出现缺失命名空间错误时，插件会自动:",
+           "1. 分析错误信息，提取缺失的命名空间",
+           "2. 从源代码中移除相关的using语句",
+           "3. 重新尝试编译",
+           "4. 根据配置的重试次数重复此过程",
            "注意：暂时不支持内嵌资源的插件生成",
-        };
-
-        RemoveUsings = new List<string>() 
-        {
-            "using System.Security.Policy;",
-            "using Org.BouncyCastle.Asn1.Cmp;",
-            "using NuGet.Protocol.Plugins;",
-            "using static Org.BouncyCastle.Math.EC.ECCurve;",
-            "using static MonoMod.InlineRT.MonoModRule;",
         };
 
         Usings = new List<string>()

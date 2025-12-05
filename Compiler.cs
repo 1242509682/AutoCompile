@@ -1,13 +1,10 @@
 using System.Diagnostics;
-using System.IO;
-using System.Reflection;
 using System.Text;
 using System.Text.RegularExpressions;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.Emit;
-using Terraria;
 using TShockAPI;
 
 namespace AutoCompile;
@@ -37,15 +34,6 @@ public class CompResult
 internal class Compiler
 {
     public static readonly object LockObj = new();
-    // 编译组类
-    public class CompilationGroup
-    {
-        public string Key { get; set; } = string.Empty;  // 根命名空间（分组键）
-        public string FullNamespace { get; set; } = string.Empty;  // 完整的命名空间（第一个文件的）
-        public List<SyntaxTree> Files { get; set; } = new List<SyntaxTree>();
-        public HashSet<string> SubNamespaces { get; set; } = new HashSet<string>();  // 所有子命名空间
-        public List<string> PublicClasses { get; set; } = new List<string>();  // 所有公共类
-    }
 
     // 静态构造函数，只会执行一次
     static Compiler()
@@ -124,7 +112,7 @@ internal class Compiler
     }
     #endregion
 
-    #region 构建逻辑（简化版，保留内存监控）
+    #region 构建逻辑（简化版）
     private static CompResult BuildAll(string[] files)
     {
         var trees = new List<SyntaxTree>();
@@ -153,7 +141,7 @@ internal class Compiler
                     }
 
                     var code = Utils.ReadAndFixFile(f);
-                    code = RemoveUsings(code);
+                    // code = RemoveUsings(code); // 强制移除指定using
 
                     if (string.IsNullOrWhiteSpace(code))
                     {
@@ -221,36 +209,7 @@ internal class Compiler
             var dllPath = Path.Combine(outDir, dllName);
             var pdbPath = Path.ChangeExtension(dllPath, ".pdb");
 
-            // 创建编译（所有文件一起编译）
-            var comp = CSharpCompilation.Create(
-                Utils.CleanName(pluginName),
-                trees,  // 直接使用所有文件
-                rfs,
-                new CSharpCompilationOptions(
-                    OutputKind.DynamicallyLinkedLibrary,
-                    optimizationLevel: OptimizationLevel.Release,
-                    warningLevel: 0,
-                    assemblyIdentityComparer: AssemblyIdentityComparer.Default,
-                    allowUnsafe: true,
-                    platform: Platform.AnyCpu,
-                    checkOverflow: false,
-                    concurrentBuild: true
-                ));
-
-            // 添加目标框架特性
-            string fw = @"[assembly: System.Runtime.Versioning.TargetFramework("".NET6.0"", FrameworkDisplayName = "".NET 6.0"")]";
-            var fwTree = CSharpSyntaxTree.ParseText(fw,
-                options: CSharpParseOptions.Default.WithLanguageVersion(Utils.GetLangVer()),
-                encoding: Encoding.UTF8);
-            comp = comp.AddSyntaxTrees(fwTree);
-
-            // 编译
-            EmitResult er;
-            using (var dStream = File.Create(dllPath))
-            using (var pStream = File.Create(pdbPath))
-            {
-                er = comp.Emit(dStream, pStream);
-            }
+            EmitResult er = CompileWithRetry(trees, rfs, pluginName, dllPath, pdbPath, AutoCompile.Config.RetryCount);
 
             // 编译失败处理
             if (!er.Success)
@@ -258,12 +217,8 @@ internal class Compiler
                 return LogsMag.ErrorMess(pluginName, er);
             }
 
-            // 编译成功
             LogsMag.LogCompile(pluginName, dllPath, pdbPath);
-
-            // 编译成功后清理所有编译日志文件
             LogsMag.ClearLogs();
-
             return CompResult.Success("编译完成", new List<string> { dllPath });
         }
         catch (OutOfMemoryException)
@@ -456,129 +411,6 @@ internal class Compiler
         var nowNs = GetNs(now);
 
         return string.Equals(exNs, nowNs, StringComparison.OrdinalIgnoreCase);
-    }
-    #endregion
-
-    #region 移除指定Using语句
-    private static string RemoveUsings(string code)
-    {
-        var rm = AutoCompile.Config.RemoveUsings;
-        if (rm == null || rm.Count == 0) return code;
-
-        // 简单的移除逻辑：直接替换为空
-        foreach (var to in rm)
-        {
-            if (string.IsNullOrWhiteSpace(to))
-                continue;
-
-            // 精确移除整行
-            string pattern = @"^\s*" + Regex.Escape(to.Trim()) + @"\s*\r?\n";
-            code = Regex.Replace(code, pattern, "", RegexOptions.Multiline);
-
-            // 如果是文件最后一行的情况
-            pattern = @"^\s*" + Regex.Escape(to.Trim()) + @"\s*$";
-            code = Regex.Replace(code, pattern, "", RegexOptions.Multiline);
-        }
-
-        return code;
-    }
-    #endregion
-
-    #region 按命名空间分组（支持根命名空间）
-    private static Dictionary<string, CompilationGroup> Grouping(List<SyntaxTree> trees)
-    {
-        var groups = new Dictionary<string, CompilationGroup>();
-
-        foreach (var tree in trees)
-        {
-            try
-            {
-                var root = tree.GetRoot();
-
-                // 获取完整命名空间
-                string ns = "Global";
-
-                // 查找标准命名空间声明
-                var nsDecl = root.DescendantNodes()
-                    .OfType<NamespaceDeclarationSyntax>()
-                    .FirstOrDefault();
-
-                if (nsDecl != null)
-                {
-                    ns = nsDecl.Name.ToString();
-                }
-                else
-                {
-                    // 查找文件作用域命名空间声明
-                    var fileNs = root.DescendantNodes()
-                        .OfType<FileScopedNamespaceDeclarationSyntax>()
-                        .FirstOrDefault();
-
-                    if (fileNs != null)
-                    {
-                        ns = fileNs.Name.ToString();
-                    }
-                }
-
-                // 计算分组键：使用根命名空间（第一个点之前的部分）
-                string key = GetRootNamespace(ns);
-
-                // 获取文件中定义的所有公共类名
-                var pubClasses = root.DescendantNodes()
-                    .OfType<ClassDeclarationSyntax>()
-                    .Where(c => c.Modifiers.Any(m => m.Text == "public" || m.Text == "internal"))
-                    .Select(c => c.Identifier.Text)
-                    .ToList();
-
-                // 创建或获取分组
-                if (!groups.ContainsKey(key))
-                {
-                    groups[key] = new CompilationGroup
-                    {
-                        Key = key,
-                        FullNamespace = ns,
-                        Files = new List<SyntaxTree>(),
-                        SubNamespaces = new HashSet<string>(),
-                        PublicClasses = new List<string>()
-                    };
-                }
-
-                // 添加文件到分组
-                groups[key].Files.Add(tree);
-                groups[key].SubNamespaces.Add(ns);
-                groups[key].PublicClasses.AddRange(pubClasses);
-            }
-            catch (Exception ex)
-            {
-                TShock.Log.ConsoleError($"【自动编译】 分析文件 {Path.GetFileName(tree.FilePath)} 时出错: {ex.Message}");
-            }
-        }
-
-        // 输出分组信息
-        TShock.Log.ConsoleInfo($"【自动编译】 分组情况 (共{groups.Count}组):");
-        foreach (var group in groups)
-        {
-            TShock.Log.ConsoleInfo($"【命名空间】 '{group.Key}': {group.Value.Files.Count} 个文件");
-            // 添加索引，从1开始
-            int idx = 1;
-            foreach (var file in group.Value.Files)
-            {
-                TShock.Log.ConsoleInfo($"{idx}.{Path.GetFileName(file.FilePath)}");
-                idx++;
-            }
-        }
-
-        return groups;
-    }
-
-    // 获取根命名空间（第一个点之前的部分）
-    private static string GetRootNamespace(string fullNamespace)
-    {
-        if (string.IsNullOrEmpty(fullNamespace) || fullNamespace == "Global")
-            return "Global";
-
-        var dotIndex = fullNamespace.IndexOf('.');
-        return dotIndex > 0 ? fullNamespace.Substring(0, dotIndex) : fullNamespace;
     }
     #endregion
 
@@ -777,6 +609,268 @@ internal class Compiler
         }
 
         return cls.Identifier.Text;
+    }
+    #endregion
+
+    #region 编译与重试方法
+    private static EmitResult CompileWithRetry(List<SyntaxTree>? trees, List<PortableExecutableReference> rfs, string pluginName, string dllPath, string pdbPath, int count)
+    {
+        TShock.Log.ConsoleInfo($"\n【自动编译】 开始编译 次数剩余{count} 次...");
+        var er = CompileOnce(trees, rfs, pluginName, dllPath, pdbPath);
+
+        // 如果编译成功或没有重试次数，直接返回
+        if (er.Success || count <= 0) return er;
+
+        // 检查是否需要重试
+        if (ShouldRetry(er))
+        {
+            TShock.Log.ConsoleInfo("【自动编译】 检测到缺失命名空间错误，尝试重试编译...");
+
+            // 分析错误，提取缺失的命名空间
+            var miss = GetMiss(er);
+
+            if (miss.Count > 0)
+            {
+                // 尝试移除有问题的using语句
+                var newTrees = RemoveUsings(trees, miss);
+
+                if (newTrees != null && newTrees.Count > 0)
+                {
+                    TShock.Log.ConsoleInfo($"【自动编译】 移除{miss.Count}个命名空间，开始重试...");
+                    // 重试编译（递归调用，减少重试次数）
+                    return CompileWithRetry(newTrees, rfs, pluginName, dllPath, pdbPath, count - 1);
+                }
+                else
+                {
+                    TShock.Log.ConsoleWarn("【自动编译】 无法移除有问题的using语句，重试失败");
+                }
+            }
+            else
+            {
+                TShock.Log.ConsoleWarn("【自动编译】 未找到缺失的命名空间，无法重试");
+            }
+        }
+        else
+        {
+            TShock.Log.ConsoleInfo("【自动编译】 错误类型不适合重试");
+        }
+
+        return er;
+    }
+    #endregion
+
+    #region 编译一次
+    private static EmitResult CompileOnce(List<SyntaxTree>? trees, List<PortableExecutableReference> rfs, string pluginName, string dllPath, string pdbPath)
+    {
+        CSharpCompilation comp = CreateComp(trees, rfs, pluginName);
+
+        // 编译
+        EmitResult er;
+        using (var dStream = File.Create(dllPath))
+        using (var pStream = File.Create(pdbPath))
+        {
+            er = comp.Emit(dStream, pStream);
+        }
+
+        return er;
+    }
+    #endregion
+
+    #region 创建编译方法
+    private static CSharpCompilation CreateComp(List<SyntaxTree>? trees, List<PortableExecutableReference> rfs, string pluginName)
+    {
+        // 创建编译（所有文件一起编译）
+        var comp = CSharpCompilation.Create(
+            Utils.CleanName(pluginName),
+            trees,  // 直接使用所有文件
+            rfs,
+            new CSharpCompilationOptions(
+                OutputKind.DynamicallyLinkedLibrary,
+                optimizationLevel: OptimizationLevel.Release,
+                warningLevel: 0,
+                assemblyIdentityComparer: AssemblyIdentityComparer.Default,
+                allowUnsafe: true,
+                platform: Platform.AnyCpu,
+                checkOverflow: false,
+                concurrentBuild: true
+            ));
+
+        // 添加目标框架特性
+        string fw = @"[assembly: System.Runtime.Versioning.TargetFramework("".NET6.0"", FrameworkDisplayName = "".NET 6.0"")]";
+        var fwTree = CSharpSyntaxTree.ParseText(fw,
+            options: CSharpParseOptions.Default.WithLanguageVersion(Utils.GetLangVer()),
+            encoding: Encoding.UTF8);
+        comp = comp.AddSyntaxTrees(fwTree);
+        return comp;
+    }
+    #endregion
+
+    #region 应用重试编译方法
+    private static bool ShouldRetry(EmitResult er)
+    {
+        if (er.Success) return false;
+
+        int errorCount = er.Diagnostics.Count(d => d.Severity == DiagnosticSeverity.Error);
+        TShock.Log.ConsoleInfo($"【自动编译】 总共 {errorCount} 个错误，开始重试");
+
+        // 检查是否有缺失命名空间或程序集的错误
+        foreach (var diag in er.Diagnostics.Where(d => d.Severity == DiagnosticSeverity.Error))
+        {
+            var msg = diag.GetMessage();
+
+            // 检查是否包含缺失命名空间的错误模式（英文）
+            if (msg.Contains("The type or namespace name") ||
+                msg.Contains("are you missing a using directive") ||
+                msg.Contains("are you missing an assembly reference") ||
+                msg.Contains("could not be found"))
+            {
+                return true;
+            }
+        }
+
+        TShock.Log.ConsoleInfo("【自动编译】 没有检测到需要重试的错误类型");
+        return false;
+    }
+    #endregion
+
+    #region 获取缺失命名空间
+    private static List<string> GetMiss(EmitResult er)
+    {
+        var ms = new List<string>();
+
+        foreach (var diag in er.Diagnostics.Where(d => d.Severity == DiagnosticSeverity.Error))
+        {
+            var msg = diag.GetMessage();
+
+            // 尝试匹配英文格式1: The type or namespace name 'X' could not be found
+            var match = Regex.Match(msg, @"The type or namespace name '([^']+)' could not be found");
+            if (match.Success)
+            {
+                var name = match.Groups[1].Value;
+                AddMissing(ms, name);
+                continue;
+            }
+
+            // 尝试匹配英文格式2: The type or namespace name 'X' does not exist in the namespace 'Y'
+            match = Regex.Match(msg, @"The type or namespace name '([^']+)' does not exist in the namespace '([^']+)'");
+            if (match.Success)
+            {
+                var typeName = match.Groups[1].Value;
+                var namespaceName = match.Groups[2].Value;
+                var fullName = $"{namespaceName}.{typeName}";
+                AddMissing(ms, fullName);
+                continue;
+            }
+        }
+
+        TShock.Log.ConsoleInfo($"【自动编译】 总共提取到 {ms.Count} 个缺失命名空间:\n {string.Join(", ", ms)}");
+        return ms;
+    }
+
+    // 辅助方法：添加缺失的命名空间
+    private static void AddMissing(List<string> missingList, string name)
+    {
+        // 尝试提取命名空间部分
+        var lastDot = name.LastIndexOf('.');
+        if (lastDot > 0)
+        {
+            var ns = name.Substring(0, lastDot);
+            if (!missingList.Contains(ns))
+            {
+                missingList.Add(ns);
+            }
+        }
+        else if (!missingList.Contains(name))
+        {
+            missingList.Add(name);
+        }
+    }
+    #endregion
+
+    #region 移除缺失的命名空间
+    private static List<SyntaxTree> RemoveUsings(List<SyntaxTree>? trees, List<string> missNs)
+    {
+        if (trees == null || trees.Count == 0)
+            return trees ?? new List<SyntaxTree>();
+
+        var newTrees = new List<SyntaxTree>();
+        int total = 0;
+
+        foreach (var tree in trees)
+        {
+            try
+            {
+                var root = tree.GetRoot();
+                var ToRemove = new List<UsingDirectiveSyntax>();
+
+                // 查找所有using指令
+                var Directives = root.DescendantNodes()
+                    .OfType<UsingDirectiveSyntax>()
+                    .ToList();
+
+                // 记录当前文件中找到的命名空间
+                var found = new List<string>();
+
+                foreach (var usingDir in Directives)
+                {
+                    var ns = usingDir.Name?.ToString();
+                    if (string.IsNullOrEmpty(ns)) continue;
+
+                    // 检查这个using是否引用了任何一个缺失的命名空间
+                    bool Remove = false;
+                    foreach (var ms in missNs)
+                    {
+                        // 情况1: using的命名空间完全等于缺失的命名空间
+                        // 情况2: using的命名空间是缺失命名空间的一部分
+                        // 情况3: 缺失的命名空间是using命名空间的一部分
+                        if (ns == ms ||
+                            ns.StartsWith(ms + ".") ||
+                            ms.StartsWith(ns + "."))
+                        {
+                            Remove = true;
+                            found.Add(ns);
+                            break;
+                        }
+                    }
+
+                    if (Remove)
+                    {
+                        ToRemove.Add(usingDir);
+                    }
+                }
+
+                // 如果有需要移除的using
+                if (ToRemove.Count > 0)
+                {
+                    total += ToRemove.Count;
+                    TShock.Log.ConsoleInfo($" 在 {Path.GetFileName(tree.FilePath)} 中移除 {ToRemove.Count} 个using:\n {string.Join(", ", found)}");
+
+                    root = root.RemoveNodes(ToRemove, SyntaxRemoveOptions.KeepNoTrivia);
+
+                    // 创建新的语法树
+                    var newTree = CSharpSyntaxTree.ParseText(
+                        text: root.ToString(),
+                        options: CSharpParseOptions.Default.WithLanguageVersion(Utils.GetLangVer()),
+                        path: tree.FilePath,
+                        encoding: Encoding.UTF8
+                    );
+
+                    newTrees.Add(newTree);
+                }
+                else
+                {
+                    newTrees.Add(tree);
+                }
+            }
+            catch (Exception ex)
+            {
+                TShock.Log.ConsoleWarn($"【自动编译】 处理文件 {Path.GetFileName(tree.FilePath)} 失败: {ex.Message}");
+                newTrees.Add(tree); // 保留原文件
+            }
+        }
+
+        TShock.Log.ConsoleInfo($" 总共移除了 {total} 个有问题的using语句");
+        return newTrees;
     }
     #endregion
 }
