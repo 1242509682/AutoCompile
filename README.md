@@ -8,6 +8,10 @@
 
 ```
 v1.0.1
+优化了每次编译后可能的内存泄露
+将/cs ql 改为清理“源码”文件夹
+加入了编译前后的内存对比显示
+移除了分组编译逻辑，避免误判报错，只允许放入同命名空间的单插件源码进行编译
 加入了少量的报错汉化与报错日志文件输出
 加入了修复中文编码（针对于某些喜欢在switch类型添加中文指令插件)
 支持指定引用系统自带的“运行时”程序集
@@ -33,8 +37,8 @@ v1.0.0
 | /cs  | 无 |   compile.use    |    菜单指令    |
 | /cs on或者off | compile.use |   compile.use    |    开启或关闭插件功能    |
 | /cs by | /cs 编译 |   compile.use    |    编译所有CS源码为DLL    |
+| /cs ql | /cs 清理 |   compile.use    |    清理“源码”文件夹    |
 | /cs lj | /cs 路径 |   compile.use    |    显示插件的所有路径    |
-| /cs ql | /cs 清理 |   compile.use    |    清理编译输出文件夹    |
 | /cs pz | /cs 配置 |   compile.use    |    显示当前配置项    |
 | /reload  | 无 |   tshock.cfg.reload    |    重载配置文件    |
 
@@ -49,36 +53,111 @@ v1.0.0
     "【配置项说明】",
     "启用: 开关插件功能",
     "包含子目录: 是否扫描[源码]子目录中的.cs文件",
-    "语言版本: C#语言版本(CSharp8-CSharp11)",
+    "语言版本: C#语言版本(CSharp8-CSharp14)",
     "最大文件数: 单次编译最多处理文件数",
     "最大大小MB: 所有.cs文件总大小限制",
-    "默认添加引用: 为所有cs文件添加默认引用(已存在则不添加)",
+    "默认添加引用: 为所有cs文件添加默认引用(已存在则不添加,只需写命名空间自动添加using)",
     "注意：暂时不支持内嵌资源的插件生成"
   ],
   "启用": true,
   "包含子目录": true,
+  "编译失败日志显示英文": true,
+  "编译失败日志显示中文": true,
+  "成功后清失败日志文件": true,
   "语言版本": "CSharp11",
   "最大文件数": 100,
   "最大大小MB": 50,
-  "默认添加引用": [
-    "using System;",
-    "using System.Collections;",
-    "using System.Collections.Generic;",
-    "using System.Linq;",
-    "using System.Text;",
-    "using System.Threading.Tasks;",
-    "using System.IO;",
-    "using System.IO.Streams;",
-    "using System.IO.Compression;",
-    "using System.Reflection;",
-    "using System.Diagnostics;",
-    "using System.Globalization;",
-    "using System.Security;",
-    "using System.Security.Cryptography;",
-    "using System.Net;",
-    "using System.Runtime.CompilerServices;",
-    "using System.Runtime.InteropServices;",
-    "using Microsoft.Xna.Framework;"
+  "移除的using语句": [
+    "using System.Security.Policy;",
+    "using Org.BouncyCastle.Asn1.Cmp;",
+    "using NuGet.Protocol.Plugins;",
+    "using static Org.BouncyCastle.Math.EC.ECCurve;",
+    "using static MonoMod.InlineRT.MonoModRule;"
+  ],
+  "默认给源码添加引用": [
+    "System",
+    "System.Collections",
+    "System.Collections.Generic",
+    "System.Linq",
+    "System.Text",
+    "System.Threading",
+    "System.Threading.Tasks",
+    "System.IO",
+    "System.IO.Streams",
+    "System.IO.Compression",
+    "System.Reflection",
+    "System.Diagnostics",
+    "System.Globalization",
+    "System.Security",
+    "System.Security.Cryptography",
+    "System.Net",
+    "System.Net.Http",
+    "System.Runtime.CompilerServices",
+    "System.Runtime.InteropServices",
+    "Microsoft.Xna.Framework"
+  ],
+  "系统程序集": [
+    "System.dll",
+    "System.Web.dll",
+    "System.Web.HttpUtility.dll",
+    "System.Net.dll",
+    "System.Net.Http.dll",
+    "System.Net.Requests.dll",
+    "System.Net.Primitives.dll",
+    "System.Private.CoreLib.dll",
+    "System.Private.Uri.dll",
+    "System.Runtime.dll",
+    "netstandard.dll",
+    "System.Core.dll",
+    "System.Private.Xml.Linq.dll",
+    "System.Diagnostics.TraceSource.dll",
+    "System.Collections.dll",
+    "System.Collections.Concurrent.dll",
+    "System.Collections.Immutable.dll",
+    "System.Linq.dll",
+    "System.Linq.Expressions.dll",
+    "System.Linq.Queryable.dll",
+    "System.IO.dll",
+    "System.IO.FileSystem.dll",
+    "System.IO.FileSystem.Primitives.dll",
+    "System.IO.Compression.dll",
+    "System.IO.Compression.ZipFile.dll",
+    "System.Text.Json.dll",
+    "System.Text.RegularExpressions.dll",
+    "System.Text.Encoding.dll",
+    "System.Text.Encoding.Extensions.dll",
+    "System.Threading.dll",
+    "System.Threading.Tasks.dll",
+    "System.Threading.Tasks.Extensions.dll",
+    "System.Threading.Thread.dll",
+    "System.Threading.ThreadPool.dll",
+    "System.Runtime.Extensions.dll",
+    "System.Runtime.InteropServices.dll",
+    "System.Runtime.CompilerServices.Unsafe.dll",
+    "System.Runtime.Numerics.dll",
+    "System.ComponentModel.dll",
+    "System.ComponentModel.Primitives.dll",
+    "System.ComponentModel.TypeConverter.dll",
+    "System.Xml.ReaderWriter.dll",
+    "System.Memory.dll",
+    "System.Buffers.dll",
+    "System.Numerics.Vectors.dll",
+    "System.Reflection.dll",
+    "System.Reflection.Primitives.dll",
+    "System.Reflection.Extensions.dll",
+    "System.Reflection.Metadata.dll",
+    "System.Reflection.TypeExtensions.dll",
+    "System.ObjectModel.dll",
+    "System.Globalization.dll",
+    "System.Diagnostics.Debug.dll",
+    "System.Diagnostics.Tools.dll",
+    "System.Diagnostics.Tracing.dll",
+    "System.Diagnostics.Process.dll",
+    "System.AppContext.dll",
+    "System.Console.dll",
+    "System.Security.Cryptography.Algorithms.dll",
+    "System.Security.Cryptography.Primitives.dll",
+    "System.Security.Principal.dll"
   ]
 }
 ```

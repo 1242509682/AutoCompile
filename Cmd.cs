@@ -14,17 +14,17 @@ internal class Cmd
             args.Player.SendErrorMessage("自动编译插件已关闭");
             return;
         }
-        
+
         var plr = args.Player;
-        
+
         if (args.Parameters.Count == 0)
         {
             ShowHelp(plr);
             return;
         }
-        
+
         var cmd = args.Parameters[0].ToLower();
-        
+
         switch (cmd)
         {
             case "by":
@@ -32,58 +32,64 @@ internal class Cmd
             case "build":
                 CompileCmd(plr, args.Parameters);
                 break;
-                
+
             case "lj":
             case "路径":
             case "path":
                 ShowPath(plr);
                 break;
-                
+
             case "ql":
             case "清理":
             case "clear":
-                CleanFiles();
-                plr.SendSuccessMessage("已清理输出文件");
+                Utils.CleanCodeFiles();
+                plr.SendSuccessMessage("已清理'源码'文件夹");
                 break;
-                
+
             case "开":
             case "on":
                 EnableCmd(plr, true);
                 break;
-                
+
             case "关":
             case "off":
                 EnableCmd(plr, false);
                 break;
-                
+
             case "pz":
             case "cfg":
             case "config":
             case "配置":
                 ShowCfg(plr);
                 break;
-                
+
         }
     }
     #endregion
-    
+
     #region 编译命令
-    private static void CompileCmd(TSPlayer plr, System.Collections.Generic.List<string> parameters)
+    private static void CompileCmd(TSPlayer plr, List<string> parameters)
     {
         try
-        {        
+        {
             plr.SendInfoMessage("开始编译...");
+            var startMem = LogsMag.GetMemInfo();
+            plr.SendInfoMessage($"- 编译前 {startMem}");
+
             var result = Compiler.CompAll();
-            
+
             if (result.Ok)
             {
+                // 显示完成时的内存信息
+                var endMem = LogsMag.GetMemInfo();
+                plr.SendInfoMessage($"- 编译后 {endMem}");
                 plr.SendSuccessMessage(result.Msg);
                 ShowFiles(plr);
             }
             else
             {
                 plr.SendErrorMessage(result.Msg);
-                
+
                 if (result.Msg.Contains("编译错误"))
                 {
                     plr.SendInfoMessage("提示: 检查代码语法和命名空间");
@@ -98,7 +104,7 @@ internal class Cmd
         }
     }
     #endregion
-    
+
     #region 开关命令
     private static void EnableCmd(TSPlayer plr, bool enabled)
     {
@@ -144,7 +150,7 @@ internal class Cmd
         try
         {
             var dllFiles = GetDllFiles();
-            
+
             if (dllFiles.Count == 0)
             {
                 plr.SendInfoMessage("暂无编译文件");
@@ -152,8 +158,8 @@ internal class Cmd
             }
 
             var outDir = Path.Combine(Configuration.Paths, "编译输出");
-            var msg = new StringBuilder("最新编译文件:\n");
-            
+            var msg = new StringBuilder("最新编译文件:");
+
             foreach (var fileName in dllFiles.Take(5))
             {
                 var filePath = Path.Combine(outDir, fileName);
@@ -161,18 +167,18 @@ internal class Cmd
                 {
                     var fileInfo = new FileInfo(filePath);
                     var sizeKB = fileInfo.Length / 1024.0;
-                    var time = fileInfo.LastWriteTime.ToString("HH:mm");
-                    msg.AppendLine($"  {fileName} ({sizeKB:F1}KB, {time})");
+                    var time = fileInfo.LastWriteTime.ToString("HH:mm:ss");
+                    msg.AppendLine($"{fileName} ({sizeKB:F1}KB, {time})");
                 }
                 else
                 {
                     msg.AppendLine($"  {fileName}");
                 }
             }
-            
+
             if (dllFiles.Count > 5)
                 msg.AppendLine($"  ... 共{dllFiles.Count}个文件");
-            
+
             GradMess(plr, msg);
         }
         catch (Exception ex)
@@ -218,52 +224,6 @@ internal class Cmd
     }
     #endregion
 
-    #region 删除编译输出文件
-    public static void CleanFiles()
-    {
-        try
-        {
-            var outDir = Path.Combine(Configuration.Paths, "编译输出");
-            if (Directory.Exists(outDir))
-            {
-                // 先删除不锁定的文件
-                var dllFiles = Directory.GetFiles(outDir, "*.dll");
-                var pdbFiles = Directory.GetFiles(outDir, "*.pdb");
-
-                foreach (var file in dllFiles)
-                {
-                    try
-                    {
-                        File.Delete(file);
-                        TShock.Log.ConsoleInfo($"【自动编译】 删除: {Path.GetFileName(file)}");
-                    }
-                    catch (Exception ex)
-                    {
-                        TShock.Log.ConsoleError($"【自动编译】 删除文件失败 {file}: {ex.Message}");
-                    }
-                }
-
-                foreach (var file in pdbFiles)
-                {
-                    try
-                    {
-                        File.Delete(file);
-                        TShock.Log.ConsoleInfo($"【自动编译】 删除: {Path.GetFileName(file)}");
-                    }
-                    catch (Exception ex)
-                    {
-                        TShock.Log.ConsoleError($"【自动编译】 删除PDB文件失败 {file}: {ex.Message}");
-                    }
-                }
-            }
-        }
-        catch (Exception ex)
-        {
-            TShock.Log.ConsoleError($"【自动编译】 清理文件失败: {ex.Message}");
-        }
-    }
-    #endregion
-
     #region 获取需要删除的编译输出文件
     public static List<string> GetDllFiles()
     {
@@ -284,7 +244,7 @@ internal class Cmd
             TShock.Log.ConsoleError($"【自动编译】 获取DLL文件列表失败: {ex.Message}");
             return new List<string>();
         }
-    } 
+    }
     #endregion
 
     #region 帮助命令
@@ -294,22 +254,22 @@ internal class Cmd
         {
             plr.SendMessage("[i:509][c/AD89D5:自][c/D68ACA:动][c/DF909A:编][c/E5A894:译] " +
                 "[C/BFDFEA:by] [c/00FFFF:羽学]", color1);
-            
+
             var msg = new StringBuilder();
-            msg.AppendLine($"/cs 编译(by) ——编译所有源码为DLL");
+            msg.AppendLine($"/cs 编译(by) ——编译源码为DLL");
+            msg.AppendLine($"/cs 清理(ql) ——清理源码文件夹");
             msg.AppendLine($"/cs 路径(lj) ——显示路径信息");
-            msg.AppendLine($"/cs 清理(ql) ——清理输出文件");
             msg.AppendLine($"/cs 配置(pz) ——查看配置");
             msg.AppendLine($"/cs 开/关 ——开关插件");
-            
+
             GradMess(plr, msg);
         }
         else
         {
             plr.SendMessage($"《自动编译插件》\n" +
-                $"/cs 编译(by) - 编译为DLL\n" +
+                $"/cs 编译(by) - 编译源码为DLL\n" +
+                $"/cs 清理(ql) - 清理源码文件夹\n" +
                 $"/cs 路径(lj) - 显示路径\n" +
-                $"/cs 清理(ql) - 清理文件\n" +
                 $"/cs 配置(pz) - 查看配置", color1);
         }
     }

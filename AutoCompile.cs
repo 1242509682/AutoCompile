@@ -13,7 +13,7 @@ public class AutoCompile : TerrariaPlugin
     #region 插件信息
     public override string Name => "自动编译插件";
     public override string Author => "羽学";
-    public override Version Version => new(1, 0, 1);
+    public override Version Version => new(1, 0, 2);
     public override string Description => "使用指令自动编译CS为DLL";
     #endregion
 
@@ -38,7 +38,7 @@ public class AutoCompile : TerrariaPlugin
     }
     #endregion
 
-    #region 内嵌资源管理
+    #region 内嵌资源管理 - 使用using语句
     private void ExtractData()
     {
         if (!Directory.Exists(Configuration.Paths))
@@ -57,7 +57,6 @@ public class AutoCompile : TerrariaPlugin
             Directory.CreateDirectory(AsmPath);
 
         var asm = Assembly.GetExecutingAssembly();
-        // 依赖
         var files = new List<string>
         {
             "System.Text.Encoding.CodePages.dll",
@@ -78,10 +77,9 @@ public class AutoCompile : TerrariaPlugin
                 var USing = Path.Combine(tshockPath, "ServerPlugins");
                 var tarPath = Path.Combine(USing, file);
 
-                // 如果文件已存在，跳过（避免重复释放）
                 if (File.Exists(tarPath)) continue;
 
-                using (var fs = File.Create(tarPath))
+                using (var fs = new FileStream(tarPath, FileMode.Create, FileAccess.Write, FileShare.None, 4096))
                 {
                     stream.CopyTo(fs);
                 }
@@ -92,34 +90,29 @@ public class AutoCompile : TerrariaPlugin
     }
     #endregion
 
-    #region 程序集管理
+    #region 程序集内嵌管理 - 使用using语句
     private void ExtractData2(string AsmPath)
     {
         var asm = Assembly.GetExecutingAssembly();
         string assemblyName = asm.GetName().Name!;
 
-        // 遍历所有内嵌资源，只处理"程序集"文件夹中的资源
         foreach (string res in asm.GetManifestResourceNames())
         {
             if (!res.StartsWith($"{assemblyName}.程序集."))
                 continue;
 
-            // 提取文件名（去掉"程序集名.程序集."前缀）
             string fileName = res.Substring(assemblyName.Length + "程序集.".Length + 1);
             string tarPath = Path.Combine(AsmPath, fileName);
 
-            // 如果文件已存在，跳过
             if (File.Exists(tarPath)) continue;
 
-            // 确保目标文件的目录存在（处理可能的子目录）
             Directory.CreateDirectory(Path.GetDirectoryName(tarPath)!);
 
             using (var stream = asm.GetManifestResourceStream(res))
             {
                 if (stream == null) continue;
-                
 
-                using (var fs = File.Create(tarPath))
+                using (var fs = new FileStream(tarPath, FileMode.Create, FileAccess.Write, FileShare.None, 4096))
                 {
                     stream.CopyTo(fs);
                 }

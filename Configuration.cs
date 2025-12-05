@@ -11,9 +11,13 @@ internal class Configuration
     public List<string> UsageTips = new List<string>();
     [JsonProperty("启用", Order = 0)]
     public bool Enabled = true;
-    [JsonProperty("包含子目录", Order = 3)]
+    [JsonProperty("包含子目录", Order = 1)]
     public bool IncludeSub = true;
-    [JsonProperty("成功后清日志文件", Order = 4)]
+    [JsonProperty("编译失败日志显示英文", Order = 2)]
+    public bool ShowErrorEnglish { get; set; } = true;
+    [JsonProperty("编译失败日志显示中文", Order = 3)]
+    public bool ShowErrorChinese { get; set; } = true;
+    [JsonProperty("成功后清失败日志文件", Order = 4)]
     public bool ClearLogs = true;
     [JsonProperty("语言版本", Order = 4)]
     public string LangVer = "CSharp11";

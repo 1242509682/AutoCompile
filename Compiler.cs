@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.IO;
 using System.Reflection;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -6,6 +7,7 @@ using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.Emit;
+using Terraria;
 using TShockAPI;
 
 namespace AutoCompile;
@@ -34,7 +36,7 @@ public class CompResult
 
 internal class Compiler
 {
-    private static readonly object LockObj = new();
+    public static readonly object LockObj = new();
     // 编译组类
     public class CompilationGroup
     {
@@ -70,7 +72,7 @@ internal class Compiler
             : Path.GetFullPath(Path.Combine(Configuration.Paths, path));
 
 
-            var safeResult = CheckSafe(fullPath);
+            var safeResult = Utils.CheckFileSize(fullPath);
             if (!safeResult.Ok)
                 return safeResult;
 
@@ -108,7 +110,7 @@ internal class Compiler
                 var msg = $"编译完成: {csFiles.Length}文件 {sw.ElapsedMilliseconds}ms";
                 if (result.Data is List<string> files)
                 {
-                    msg += $"\n生成: {files.Count}个DLL";
+                    msg += $" 生成{files.Count}个DLL";
                 }
                 return CompResult.Success(msg, result.Data);
             }
@@ -122,55 +124,18 @@ internal class Compiler
     }
     #endregion
 
-    #region 安全检查
-    private static CompResult CheckSafe(string path)
-    {
-        try
-        {
-            var files = Directory.GetFiles(path, "*.cs", SearchOption.AllDirectories);
-
-            // 检查文件数量
-            if (files.Length > AutoCompile.Config.MaxFiles)
-            {
-                return CompResult.Fail($"文件过多: {files.Length} > {AutoCompile.Config.MaxFiles}");
-            }
-
-            // 检查文件大小
-            long totalSize = 0;
-            foreach (var file in files)
-            {
-                var info = new FileInfo(file);
-                totalSize += info.Length;
-            }
-
-            var totalMB = totalSize / 1024 / 1024;
-            if (totalMB > AutoCompile.Config.MaxSizeMB)
-            {
-                TShock.Log.ConsoleWarn($"文件过大: {totalMB}MB > {AutoCompile.Config.MaxSizeMB}MB");
-                return CompResult.Fail($"文件过大: {totalMB}MB > {AutoCompile.Config.MaxSizeMB}MB");
-            }
-
-            return CompResult.Success();
-        }
-        catch (Exception ex)
-        {
-            return CompResult.Fail($"安全检查异常: {ex.Message}");
-        }
-    }
-    #endregion
-
-    #region 构建逻辑
+    #region 构建逻辑（简化版，保留内存监控）
     private static CompResult BuildAll(string[] files)
     {
+        var trees = new List<SyntaxTree>();
+        var refs = new HashSet<string>();
+        var skp = new List<string>();
+        var err = new List<string>();
+
         try
         {
             // 清理旧文件
-            Cmd.CleanFiles();
-
-            var trees = new List<SyntaxTree>();  // 语法树列表
-            var refs = new HashSet<string>();    // 引用集合
-            var skp = new List<string>();        // 跳过文件列表
-            var err = new List<string>();        // 错误文件列表
+            Utils.CleanOutFiles();
 
             // 添加引用
             AddRefs(refs);
@@ -180,36 +145,34 @@ internal class Compiler
             {
                 try
                 {
-                    var fi = new FileInfo(f);    // 文件信息
-                    if (fi.Length == 0)          // 空文件
+                    var fi = new FileInfo(f);
+                    if (fi.Length == 0)
                     {
                         skp.Add($"{Path.GetFileName(f)} (空)");
                         continue;
                     }
 
                     var code = Utils.ReadAndFixFile(f);
-
-                    // 直接移除有问题的 using 语句
                     code = RemoveUsings(code);
 
-                    if (string.IsNullOrWhiteSpace(code))  // 空白文件
+                    if (string.IsNullOrWhiteSpace(code))
                     {
                         skp.Add($"{Path.GetFileName(f)} (空白)");
                         continue;
                     }
 
-                    if (!IsValidCSharpCode(code))  // 无效C#代码
+                    if (!Utils.IsValidCSharpCode(code))
                     {
                         skp.Add($"{Path.GetFileName(f)} (无效)");
                         continue;
                     }
 
-                    var uc = AddUsings(code);  // 添加using语句
+                    var uc = AddUsings(code);
 
                     // 解析语法树
                     var tree = CSharpSyntaxTree.ParseText(
                         text: uc,
-                        options: CSharpParseOptions.Default.WithLanguageVersion(GetLangVer()),
+                        options: CSharpParseOptions.Default.WithLanguageVersion(Utils.GetLangVer()),
                         path: f,
                         encoding: Encoding.UTF8
                     );
@@ -225,7 +188,7 @@ internal class Compiler
             // 记录跳过的文件
             if (skp.Count > 0 || err.Count > 0)
             {
-                LogSkip(skp, err);
+                LogsMag.LogSkip(skp, err);
             }
 
             // 无有效文件
@@ -248,76 +211,60 @@ internal class Compiler
             if (rfs.Count == 0)
                 return CompResult.Fail("无有效引用");
 
-            // 分组编译
-            var grps = Grouping(trees);
-            var dlls = new List<string>();
+            // 获取插件名称
+            var pluginName = GetPluginName(trees);
+            if (string.IsNullOrEmpty(pluginName))
+                pluginName = "MyPlugin";
 
             var outDir = Path.Combine(Configuration.Paths, "编译输出");
+            var dllName = $"{Utils.CleanName(pluginName)}.dll";
+            var dllPath = Path.Combine(outDir, dllName);
+            var pdbPath = Path.ChangeExtension(dllPath, ".pdb");
 
-            // 遍历每个分组
-            foreach (var g in grps)
+            // 创建编译（所有文件一起编译）
+            var comp = CSharpCompilation.Create(
+                Utils.CleanName(pluginName),
+                trees,  // 直接使用所有文件
+                rfs,
+                new CSharpCompilationOptions(
+                    OutputKind.DynamicallyLinkedLibrary,
+                    optimizationLevel: OptimizationLevel.Release,
+                    warningLevel: 0,
+                    assemblyIdentityComparer: AssemblyIdentityComparer.Default,
+                    allowUnsafe: true,
+                    platform: Platform.AnyCpu,
+                    checkOverflow: false,
+                    concurrentBuild: true
+                ));
+
+            // 添加目标框架特性
+            string fw = @"[assembly: System.Runtime.Versioning.TargetFramework("".NET6.0"", FrameworkDisplayName = "".NET 6.0"")]";
+            var fwTree = CSharpSyntaxTree.ParseText(fw,
+                options: CSharpParseOptions.Default.WithLanguageVersion(Utils.GetLangVer()),
+                encoding: Encoding.UTF8);
+            comp = comp.AddSyntaxTrees(fwTree);
+
+            // 编译
+            EmitResult er;
+            using (var dStream = File.Create(dllPath))
+            using (var pStream = File.Create(pdbPath))
             {
-                // 创建编译
-                var comp = CSharpCompilation.Create(
-                    Utils.CleanName(g.Key),  // 清理后的名称
-                    g.Value.Files,            // 分组文件
-                    rfs,                      // 引用
-                    new CSharpCompilationOptions(
-                        OutputKind.DynamicallyLinkedLibrary,
-                        optimizationLevel: OptimizationLevel.Release,
-                        warningLevel: 0,
-                        assemblyIdentityComparer: AssemblyIdentityComparer.Default,
-                        allowUnsafe: true,
-                        platform: Platform.AnyCpu,
-                        checkOverflow: false,
-                        concurrentBuild: true
-                    ));
-
-                // 添加目标框架特性 .NET 6.0
-                string fw = @"[assembly: System.Runtime.Versioning.TargetFramework("".NET6.0"", FrameworkDisplayName = "".NET 6.0"")]";
-
-                // 创建框架特性语法树
-                var fwTree = CSharpSyntaxTree.ParseText(fw,
-                    options: CSharpParseOptions.Default.WithLanguageVersion(GetLangVer()),
-                    encoding: Encoding.UTF8);
-
-                comp = comp.AddSyntaxTrees(fwTree);  // 添加到编译
-
-                // 生成DLL文件名
-                string dllName;
-                var pName = GetPluginName(g.Value);
-                dllName = $"{Utils.CleanName(pName)}.dll";
-
-                var dllPath = Path.Combine(outDir, dllName);
-                var pdbPath = Path.ChangeExtension(dllPath, ".pdb");
-
-                // 编译
-                EmitResult er;
-
-                // 带PDB输出
-                using (var dStream = File.Create(dllPath))
-                using (var pStream = File.Create(pdbPath))
-                {
-                    er = comp.Emit(dStream, pStream);
-                }
-
-                // 编译失败处理
-                if (!er.Success)
-                {
-                    return ErrorMessMag.ErrorMess(g, er);
-                }
-
-                // 编译成功，添加到结果列表
-                dlls.Add(dllPath);
-
-                // 记录编译日志
-                LogCompile(g.Key, dllPath, pdbPath);
+                er = comp.Emit(dStream, pStream);
             }
 
-            // 编译成功后清理所有编译日志文件
-            ClearLogs();
+            // 编译失败处理
+            if (!er.Success)
+            {
+                return LogsMag.ErrorMess(pluginName, er);
+            }
 
-            return CompResult.Success("编译完成", dlls);
+            // 编译成功
+            LogsMag.LogCompile(pluginName, dllPath, pdbPath);
+
+            // 编译成功后清理所有编译日志文件
+            LogsMag.ClearLogs();
+
+            return CompResult.Success("编译完成", new List<string> { dllPath });
         }
         catch (OutOfMemoryException)
         {
@@ -329,60 +276,37 @@ internal class Compiler
         }
         finally
         {
-            // 无论成功失败 只要结束就尝试进行垃圾回收
+            // 清理资源
             try
             {
+                // 在现有GC清理前添加内存信息 - 保留
+                var memInfo = LogsMag.GetMemInfo();
+                TShock.Log.ConsoleInfo($"【自动编译】 编译完成，{memInfo}");
+
+                // 清除所有引用
+                trees?.Clear();
+                trees = null;
+                skp?.Clear();
+                skp = null;
+                err?.Clear();
+                err = null;
+                refs?.Clear();
+                refs = null;
+
+                // 删除原来的复杂GC清理，改为简单版本
                 var mem1 = GC.GetTotalMemory(false);
-                GC.Collect(GC.MaxGeneration, GCCollectionMode.Forced, true, true);
-                GC.WaitForPendingFinalizers();
-                GC.Collect(GC.MaxGeneration, GCCollectionMode.Forced, true, true);
+                GC.Collect();  // 简单GC，不强制参数
                 var mem2 = GC.GetTotalMemory(true);
                 var freed = mem1 - mem2;
-                if (freed > 1024 * 1024)  // 释放超过1MB
+                if (freed > 1024 * 1024)
                 {
-                    TShock.Log.ConsoleInfo($"【自动编译】GC释放内存 {freed / 1024 / 1024:F2} MB");
+                    TShock.Log.ConsoleInfo($"【自动编译】 释放内存 {freed / 1024 / 1024:F2} MB");
                 }
             }
             catch (Exception ex)
             {
-                TShock.Log.ConsoleWarn($"【自动编译】内存清理异常: {ex.Message}");
+                TShock.Log.ConsoleWarn($"【自动编译】 内存清理异常: {ex.Message}");
             }
-        }
-    }
-    #endregion
-
-    #region 编译成功后清理日志文件
-    private static void ClearLogs()
-    {
-        // 检查配置是否启用清理
-        if (!AutoCompile.Config.ClearLogs) return;
-
-        try
-        {
-            var logDir = Path.Combine(Configuration.Paths, "编译日志");
-            if (!Directory.Exists(logDir))
-                return;
-
-            // 获取所有日志文件
-            var logFiles = Directory.GetFiles(logDir, "*.txt", SearchOption.AllDirectories);
-            if (logFiles.Length == 0)
-                return;
-
-            int count = 0;
-            foreach (var logFile in logFiles)
-            {
-                File.Delete(logFile);
-                count++;
-            }
-
-            if (count > 0)
-            {
-                TShock.Log.ConsoleInfo($"【自动编译】 清理了 {count} 个编译日志文件");
-            }
-        }
-        catch (Exception ex)
-        {
-            TShock.Log.ConsoleWarn($"【自动编译】 清理编译日志失败: {ex.Message}");
         }
     }
     #endregion
@@ -560,48 +484,6 @@ internal class Compiler
     }
     #endregion
 
-    #region 获取C#版本号 .net 6对应的是CSharp11
-    private static LanguageVersion GetLangVer()
-    {
-        return AutoCompile.Config.LangVer switch
-        {
-            "CSharp8" => LanguageVersion.CSharp8,
-            "CSharp9" => LanguageVersion.CSharp9,
-            "CSharp10" => LanguageVersion.CSharp10,
-            "CSharp11" => LanguageVersion.CSharp11,
-            "CSharp12" => LanguageVersion.CSharp12,
-            "CSharp13" => LanguageVersion.CSharp13,
-            "CSharp14" => LanguageVersion.CSharp14,
-            _ => LanguageVersion.Latest
-        };
-    }
-    #endregion
-
-    #region 检查是否是C#代码 
-    private static bool IsValidCSharpCode(string code)
-    {
-        if (string.IsNullOrWhiteSpace(code))
-            return false;
-
-        try
-        {
-            // 尝试解析，让编译器决定是否有效
-            var tree = CSharpSyntaxTree.ParseText(code);
-
-            // 如果有语法错误，ParseText可能不会抛出异常
-            // 但会包含诊断信息
-            var diagnostics = tree.GetDiagnostics();
-
-            // 如果没有严重错误（则认为可用)
-            return !diagnostics.Any(d => d.Severity == DiagnosticSeverity.Error);
-        }
-        catch
-        {
-            return false;
-        }
-    }
-    #endregion
-
     #region 按命名空间分组（支持根命名空间）
     private static Dictionary<string, CompilationGroup> Grouping(List<SyntaxTree> trees)
     {
@@ -700,7 +582,7 @@ internal class Compiler
     }
     #endregion
 
-    #region 添加程序集引用
+    #region 添加所有引用
     internal static void AddRefs(HashSet<string> refs)
     {
         try
@@ -713,7 +595,7 @@ internal class Compiler
             // 2. 系统程序集 - 添加更多基础程序集
             AddSystemReferences(refs);
 
-            TShock.Log.ConsoleInfo($"【自动编译】 总共添加了 {refs.Count} 个引用");
+            TShock.Log.ConsoleInfo($"【自动编译】 总共添加了 {refs.Count} 个引用\n (含bin文件夹 5个 + TShockAPI 1个)");
         }
         catch (Exception ex)
         {
@@ -779,7 +661,7 @@ internal class Compiler
                     if (File.Exists(dllPath) && !refs.Contains(dllPath))
                     {
                         // 跳过可能损坏或无法加载的DLL
-                        if (IsValidAssembly(dllPath))
+                        if (Utils.IsValidDll(dllPath))
                         {
                             refs.Add(dllPath);
                             count++;
@@ -831,40 +713,13 @@ internal class Compiler
     }
     #endregion
 
-    #region 检查程序集是否有效
-    private static bool IsValidAssembly(string assemblyPath)
-    {
-        try
-        {
-            // 尝试加载程序集来验证其有效性
-            var name = AssemblyName.GetAssemblyName(assemblyPath);
-            return name != null;
-        }
-        catch (BadImageFormatException)
-        {
-            // 不是有效的.NET程序集
-            return false;
-        }
-        catch (FileLoadException)
-        {
-            // 文件损坏或无法加载
-            return false;
-        }
-        catch (Exception ex)
-        {
-            TShock.Log.ConsoleWarn($"【自动编译】 检查程序集失败 {Path.GetFileName(assemblyPath)}: {ex.Message}");
-            return false;
-        }
-    }
-    #endregion
-
     #region 提取插件名称
-    private static string GetPluginName(CompilationGroup group)
+    private static string GetPluginName(List<SyntaxTree> trees)
     {
         try
         {
             // 遍历组中的所有文件，查找插件信息
-            foreach (var tree in group.Files)
+            foreach (var tree in trees)
             {
                 var root = tree.GetRoot();
 
@@ -922,70 +777,6 @@ internal class Compiler
         }
 
         return cls.Identifier.Text;
-    }
-    #endregion
-
-    #region 日志方法
-    private static void LogCompile(string ns, string dllPath, string pdbPath)
-    {
-        try
-        {
-            var log = new StringBuilder();
-            log.AppendLine($"=== {DateTime.Now:yyyy-MM-dd HH:mm:ss} ===");
-            log.AppendLine($"命名空间: {ns}");
-            log.AppendLine($"DLL文件: {Path.GetFileName(dllPath)}");
-            log.AppendLine($"文件大小: {new FileInfo(dllPath).Length / 1024} KB");
-
-            if (pdbPath != null && File.Exists(pdbPath))
-            {
-                log.AppendLine($"PDB文件: {Path.GetFileName(pdbPath)}");
-            }
-
-            log.AppendLine();
-
-            TShock.Log.Debug(log.ToString());
-        }
-        catch (Exception ex)
-        {
-            TShock.Log.ConsoleError($"【自动编译】 记录编译日志失败: {ex.Message}");
-        }
-    }
-
-    private static void LogSkip(List<string> skipped, List<string> errors)
-    {
-        try
-        {
-            var log = new StringBuilder();
-            log.AppendLine($"=== {DateTime.Now:yyyy-MM-dd HH:mm:ss} ===");
-
-            if (skipped.Count > 0)
-            {
-                log.AppendLine($"跳过 {skipped.Count} 个文件:");
-                foreach (var file in skipped.Take(10))
-                    log.AppendLine($"  {file}");
-
-                if (skipped.Count > 10)
-                    log.AppendLine($"  ... 等{skipped.Count}个文件");
-            }
-
-            if (errors.Count > 0)
-            {
-                log.AppendLine($"错误 {errors.Count} 个文件:");
-                foreach (var file in errors.Take(10))
-                    log.AppendLine($"  {file}");
-
-                if (errors.Count > 10)
-                    log.AppendLine($"  ... 等{errors.Count}个文件");
-            }
-
-            log.AppendLine();
-
-            TShock.Log.Info(log.ToString());
-        }
-        catch (Exception ex)
-        {
-            TShock.Log.ConsoleError($"【自动编译】 记录跳过文件日志失败: {ex.Message}");
-        }
     }
     #endregion
 }
