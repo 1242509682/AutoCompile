@@ -13,7 +13,7 @@ public class AutoCompile : TerrariaPlugin
     #region 插件信息
     public override string Name => "自动编译插件";
     public override string Author => "羽学";
-    public override Version Version => new(1, 0, 2);
+    public override Version Version => new(1, 0, 3);
     public override string Description => "使用指令自动编译CS为DLL";
     #endregion
 
@@ -38,7 +38,7 @@ public class AutoCompile : TerrariaPlugin
     }
     #endregion
 
-    #region 内嵌资源管理 - 使用using语句
+    #region 内嵌依赖项管理
     private void ExtractData()
     {
         if (!Directory.Exists(Configuration.Paths))
@@ -90,7 +90,7 @@ public class AutoCompile : TerrariaPlugin
     }
     #endregion
 
-    #region 程序集内嵌管理 - 使用using语句
+    #region 内嵌程序集管理
     private void ExtractData2(string AsmPath)
     {
         var asm = Assembly.GetExecutingAssembly();

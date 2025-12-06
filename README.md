@@ -7,6 +7,10 @@
 ## 更新日志
 
 ```
+v1.0.3
+移除了【智能修复】避免误伤某些命名空间导致编译失败
+恢复了【移除指定using语句】配置项(比较稳妥,自己决定是否移除)
+
 v1.0.2
 优化了每次编译后可能的内存泄露
 将/cs ql 改为清理“源码”文件夹
@@ -61,23 +65,28 @@ v1.0.0
     "最大文件数: 单次编译最多处理文件数",
     "最大大小MB: 所有.cs文件总大小限制",
     "默认添加引用: 为所有cs文件添加默认引用(已存在则不添加,只需写命名空间自动添加using)",
-    "【智能修复】",
-    "当编译出现缺失命名空间错误时，插件会自动:",
-    "1. 分析错误信息，提取缺失的命名空间",
-    "2. 从源代码中移除相关的using语句",
-    "3. 重新尝试编译",
-    "4. 根据配置的重试次数重复此过程",
+    "移除using语句:自动移除已存在的using语句",
     "注意：暂时不支持内嵌资源的插件生成"
   ],
   "启用": true,
   "包含子目录": true,
-  "智能修复重试次数": 3,
   "编译失败日志显示英文": true,
   "编译失败日志显示中文": true,
   "成功后清失败日志文件": true,
   "语言版本": "CSharp11",
   "最大文件数": 100,
   "最大大小MB": 50,
+  "移除指定using语句": [
+    "Steamworks",
+    "System.Numerics",
+    "System.Security.Policy",
+    "Org.BouncyCastle.Asn1.Cmp",
+    "Org.BouncyCastle.Asn1.X509",
+    "NuGet.Protocol.Plugins",
+    "Org.BouncyCastle.Math.EC.ECCurve",
+    "using static Org.BouncyCastle.Math.EC.ECCurve;",
+    "using static MonoMod.InlineRT.MonoModRule;"
+  ],
   "默认给源码添加引用": [
     "System",
     "System.Collections",

@@ -1,49 +1,12 @@
 ﻿using System.Text;
 using System.Text.RegularExpressions;
 using Microsoft.CodeAnalysis;
-using Microsoft.CodeAnalysis.Emit;
 using TShockAPI;
 
 namespace AutoCompile;
 
 internal class LogsMag
 {
-    #region 编译成功后清理日志文件
-    public static void ClearLogs()
-    {
-        // 检查配置是否启用清理
-        if (!AutoCompile.Config.ClearLogs) return;
-
-        try
-        {
-            var logDir = Path.Combine(Configuration.Paths, "编译日志");
-            if (!Directory.Exists(logDir))
-                return;
-
-            // 获取所有日志文件
-            var logFiles = Directory.GetFiles(logDir, "*.txt", SearchOption.AllDirectories);
-            if (logFiles.Length == 0)
-                return;
-
-            int count = 0;
-            foreach (var logFile in logFiles)
-            {
-                File.Delete(logFile);
-                count++;
-            }
-
-            if (count > 0)
-            {
-                TShock.Log.ConsoleInfo($"【自动编译】 清理了 {count} 个编译日志文件");
-            }
-        }
-        catch (Exception ex)
-        {
-            TShock.Log.ConsoleWarn($"【自动编译】 清理编译日志失败: {ex.Message}");
-        }
-    }
-    #endregion
-
     #region 日志方法
     public static void LogCompile(string ns, string dllPath, string pdbPath)
     {
@@ -108,53 +71,8 @@ internal class LogsMag
     }
     #endregion
 
-    #region 错误处理
-    public static CompResult ErrorMess(string pluginName, EmitResult er)
-    {
-        try
-        {
-            var sb = new StringBuilder();
-            sb.AppendLine($"❌ 编译失败 [{pluginName}]");
-            sb.AppendLine("-".PadRight(40, '-'));
-
-            // 添加内存信息
-            var memInfo = LogsMag.GetMemInfo();
-            sb.AppendLine($"编译时内存: {memInfo}");
-            sb.AppendLine();
-
-            // 获取错误
-            var errs = er.Diagnostics
-                .Where(d => d.Severity == DiagnosticSeverity.Error)
-                .ToList();
-
-            // 只显示错误数量
-            sb.AppendLine($"发现 {errs.Count} 个错误");
-
-            sb.AppendLine("\n🔧 解决建议：");
-            sb.AppendLine("  1. 检查「程序集」文件夹");
-            sb.AppendLine("  2. 确保 using 语句正确");
-            sb.AppendLine("  3. 检查源码文件是否完整");
-            sb.AppendLine("  4. 查看日志文件");
-
-            // 记录到控制台
-            TShock.Log.ConsoleError(sb.ToString());
-
-            // 记录到日志文件
-            LogErrFile(pluginName, errs);
-
-            return CompResult.Fail("编译失败");
-        }
-        catch (Exception ex)
-        {
-            TShock.Log.ConsoleError($"❌ 编译失败 [{pluginName}]");
-            TShock.Log.ConsoleError($"错误异常: {ex.Message}");
-            return CompResult.Fail("编译失败");
-        }
-    }
-    #endregion
-
-    #region 记录错误到日志文件 - 使用using语句
-    private static void LogErrFile(string grpName, List<Diagnostic> errs)
+    #region 记录错误到日志文件
+    public static void LogErrFile(string pluginName, List<Diagnostic> errs)
     {
         try
         {
@@ -162,13 +80,13 @@ internal class LogsMag
             if (!Directory.Exists(logDir))
                 Directory.CreateDirectory(logDir);
 
-            var safeName = Utils.CleanName(grpName);
+            var safeName = Utils.CleanName(pluginName);
             var logFile = Path.Combine(logDir, $"{safeName}_{DateTime.Now:yyyyMMdd_HHmmss}.txt");
 
             using (var writer = new StreamWriter(logFile, false, Encoding.UTF8, 4096))
             {
                 writer.WriteLine($"编译错误日志 - {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
-                writer.WriteLine($"组名: {grpName}");
+                writer.WriteLine($"插件名: {pluginName}");
                 writer.WriteLine($"总错误数: {errs.Count}");
                 writer.WriteLine("=".PadRight(80, '='));
 
@@ -183,11 +101,11 @@ internal class LogsMag
                     .GroupBy(e => e.CleanMsg)
                     .ToList();
 
-                int groupIndex = 0;
+                int Index = 0;
                 foreach (var group in errorGroups)
                 {
-                    groupIndex++;
-                    writer.WriteLine($"\n[第 {groupIndex} 类错误] 共 {group.Count()} 处");
+                    Index++;
+                    writer.WriteLine($"\n[第 {Index} 类错误] 共 {group.Count()} 处");
                     writer.WriteLine("-".PadRight(80, '-'));
 
                     // 显示错误位置
@@ -199,7 +117,7 @@ internal class LogsMag
                         if (loc.SourceTree != null && loc.GetLineSpan().IsValid)
                         {
                             var lineSpan = loc.GetLineSpan();
-                            lineInfo = $"行 {lineSpan.StartLinePosition.Line + 1}";
+                            lineInfo = $"行 {lineSpan.StartLinePosition.Line + 1}, 列 {lineSpan.StartLinePosition.Character + 1}";
                         }
                         var fileName = Path.GetFileName(loc.SourceTree?.FilePath ?? "Unknown");
                         writer.WriteLine($"  {fileName} {lineInfo}");
@@ -209,21 +127,21 @@ internal class LogsMag
                     writer.WriteLine("错误内容:");
 
                     // 根据配置显示英文和中文
-                    bool showEnglish = AutoCompile.Config.ShowErrorEnglish;
-                    bool showChinese = AutoCompile.Config.ShowErrorChinese;
+                    bool showEN = AutoCompile.Config.ShowErrorEnglish;
+                    bool showCN = AutoCompile.Config.ShowErrorChinese;
 
                     // 如果两个都为false，默认显示英文
-                    if (!showEnglish && !showChinese)
+                    if (!showEN && !showCN)
                     {
-                        showEnglish = true;
+                        showEN = true;
                     }
 
-                    if (showEnglish)
+                    if (showEN)
                     {
                         writer.WriteLine($"(EN): {group.First().OrigMsg}");
                     }
 
-                    if (showChinese && !string.IsNullOrEmpty(group.Key))
+                    if (showCN && !string.IsNullOrEmpty(group.Key))
                     {
                         writer.WriteLine($"(CN): {group.Key}");
                     }
@@ -243,7 +161,7 @@ internal class LogsMag
     #endregion
 
     #region 清理错误信息
-    private static string CleanErrMsg(string errMsg)
+    public static string CleanErrMsg(string errMsg)
     {
         if (string.IsNullOrEmpty(errMsg))
             return errMsg;
@@ -255,7 +173,7 @@ internal class LogsMag
         // 将单引号 ' 替换为中文括号【】
         errMsg = ReplaceQuotes(errMsg);
 
-        // 翻译行尾括号内的内容
+        // 翻译行内的内容
         errMsg = TranslateParentheses(errMsg);
 
         return errMsg.Trim();
@@ -335,8 +253,6 @@ internal class LogsMag
             ("takes", "接受"),
             ("arguments", "参数"),
             ("cannot convert from", "无法从"),
-            ("to", "转换为"),
-            ("and", "和"),
             ("An object reference is required for the non-static field, method, or property", "非静态字段、方法或属性需要对象引用"),
             ("Missing compiler required member", "缺少编译器所需的成员"),
             ("The feature", "该功能"),

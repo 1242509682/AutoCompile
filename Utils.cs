@@ -1,11 +1,12 @@
-﻿using System.Text;
-using TShockAPI;
-using Terraria;
-using Microsoft.Xna.Framework;
-using Terraria.Utilities;
-using Microsoft.CodeAnalysis.CSharp;
+﻿using System.Reflection;
+using System.Text;
 using Microsoft.CodeAnalysis;
-using System.Reflection;
+using Microsoft.CodeAnalysis.CSharp;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
+using Microsoft.Xna.Framework;
+using Terraria;
+using Terraria.Utilities;
+using TShockAPI;
 
 namespace AutoCompile;
 
@@ -168,6 +169,193 @@ internal class Utils
     }
     #endregion
 
+    #region 格式化 using
+    public static string FmtUsings(List<string> usgs)
+    {
+        if (usgs == null || usgs.Count == 0)
+            return string.Empty;
+
+        var sb = new StringBuilder();
+
+        foreach (var usg in usgs)
+        {
+            if (string.IsNullOrWhiteSpace(usg))
+                continue;
+
+            var trim = usg.Trim();
+
+            // 已完整
+            if (trim.StartsWith("using ") && trim.EndsWith(";"))
+            {
+                sb.AppendLine(trim);
+            }
+            // 需补充
+            else
+            {
+                sb.AppendLine($"using {trim};");
+            }
+        }
+
+        return sb.ToString();
+    }
+    #endregion
+
+    #region 提取代码中已有的 using 指令
+    public static List<string> GetExistUsings(string code)
+    {
+        var usings = new List<string>();
+
+        try
+        {
+            var tree = CSharpSyntaxTree.ParseText(code);
+            var root = tree.GetRoot();
+
+            var Directives = root.DescendantNodes()
+                .OfType<UsingDirectiveSyntax>()
+                .Select(u => u.ToString())
+                .ToList();
+
+            usings.AddRange(Directives);
+        }
+        catch
+        {
+            // 解析失败时使用简单方法
+            var lines = code.Split('\n');
+            foreach (var line in lines)
+            {
+                var trimmed = line.Trim();
+                if (trimmed.StartsWith("using ") && trimmed.EndsWith(";"))
+                {
+                    usings.Add(trimmed);
+                }
+            }
+        }
+
+        return usings;
+    }
+    #endregion
+
+    #region 过滤掉重复的 using
+    public static string FilterUsings(string fmtUsgs, List<string> exist)
+    {
+        var lines = fmtUsgs.Split('\n');
+        var result = new StringBuilder();
+
+        foreach (var line in lines)
+        {
+            if (string.IsNullOrWhiteSpace(line))
+                continue;
+
+            var trim = line.Trim();
+
+            // 取命名空间部分
+            string nsOnly = GetNs(trim);
+
+            // 查重复
+            bool existFlag = exist.Any(ex =>
+                SameNs(ex.Trim(), trim) || SameNs(ex.Trim(), nsOnly));
+
+            if (!existFlag)
+                result.AppendLine(trim);
+        }
+
+        return result.ToString();
+    }
+
+    // 取命名空间
+    public static string GetNs(string usgStmt)
+    {
+        if (string.IsNullOrWhiteSpace(usgStmt))
+            return string.Empty;
+
+        var trim = usgStmt.Trim();
+
+        if (trim.StartsWith("using "))
+            trim = trim.Substring(6);
+
+        if (trim.EndsWith(";"))
+            trim = trim.Substring(0, trim.Length - 1);
+
+        return trim.Trim();
+    }
+
+    // 比命名空间
+    public static bool SameNs(string ex, string now)
+    {
+        var exNs = GetNs(ex);
+        var nowNs = GetNs(now);
+
+        return string.Equals(exNs, nowNs, StringComparison.OrdinalIgnoreCase);
+    }
+    #endregion
+
+    #region 提取插件名称
+    public static string GetPluginName(List<SyntaxTree> trees)
+    {
+        try
+        {
+            // 遍历组中的所有文件，查找插件信息
+            foreach (var tree in trees)
+            {
+                var root = tree.GetRoot();
+
+                // 查找继承自TerrariaPlugin的主类
+                var MainClass = root.DescendantNodes()
+                    .OfType<ClassDeclarationSyntax>()
+                    .FirstOrDefault(cls => cls.BaseList?.Types
+                        .Any(t => t.Type.ToString().Contains("TerrariaPlugin")) == true);
+
+                if (MainClass != null)
+                {
+                    // 查找Name属性
+                    var nameProp = MainClass.DescendantNodes()
+                        .OfType<PropertyDeclarationSyntax>()
+                        .FirstOrDefault(p => p.Identifier.Text == "Name");
+
+                    // 提取插件名称
+                    if (nameProp is null) continue;
+
+                    string name = NameFromProperty(nameProp, MainClass);
+
+                    if (!string.IsNullOrEmpty(name))
+                    {
+                        TShock.Log.ConsoleInfo($"【自动编译】 在{Path.GetFileName(tree.FilePath)}中获取到插件名: {name}");
+                        return name;
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            TShock.Log.ConsoleWarn($"【自动编译】 提取插件信息失败: {ex.Message}");
+        }
+
+        return string.Empty;
+    }
+
+    // 从属性中提取名称
+    private static string NameFromProperty(PropertyDeclarationSyntax prop, ClassDeclarationSyntax cls)
+    {
+        if (prop == null) return cls.Identifier.Text;
+
+        // 箭头函数形式
+        if (prop.ExpressionBody?.Expression is LiteralExpressionSyntax literal)
+        {
+            return literal.Token.ValueText;
+        }
+
+        // Getter形式
+        var getter = prop.AccessorList?.Accessors.FirstOrDefault(a => a.Keyword.Text == "get");
+        if (getter?.Body?.Statements.FirstOrDefault() is ReturnStatementSyntax Stmt &&
+            Stmt.Expression is LiteralExpressionSyntax Expr)
+        {
+            return Expr.Token.ValueText;
+        }
+
+        return cls.Identifier.Text;
+    }
+    #endregion
+
     #region 编码检测和修复
     public static string ReadAndFixFile(string code)
     {
@@ -300,6 +488,61 @@ internal class Utils
         catch (Exception ex)
         {
             TShock.Log.ConsoleError($"【自动编译】 清理源码文件失败: {ex.Message}");
+        }
+    }
+    #endregion
+
+    #region 获取错误所在文件名
+    public static string GetFileName(Diagnostic diagnostic)
+    {
+        try
+        {
+            var location = diagnostic.Location;
+            if (location.SourceTree != null && !string.IsNullOrEmpty(location.SourceTree.FilePath))
+            {
+                return Path.GetFileName(location.SourceTree.FilePath);
+            }
+            return "Unknown";
+        }
+        catch
+        {
+            return "Unknown";
+        }
+    }
+    #endregion
+
+    #region 编译成功后清理日志文件
+    public static void ClearLogs()
+    {
+        // 检查配置是否启用清理
+        if (!AutoCompile.Config.ClearLogs) return;
+
+        try
+        {
+            var logDir = Path.Combine(Configuration.Paths, "编译日志");
+            if (!Directory.Exists(logDir))
+                return;
+
+            // 获取所有日志文件
+            var logFiles = Directory.GetFiles(logDir, "*.txt", SearchOption.AllDirectories);
+            if (logFiles.Length == 0)
+                return;
+
+            int count = 0;
+            foreach (var logFile in logFiles)
+            {
+                File.Delete(logFile);
+                count++;
+            }
+
+            if (count > 0)
+            {
+                TShock.Log.ConsoleInfo($"【自动编译】 清理了 {count} 个编译日志文件");
+            }
+        }
+        catch (Exception ex)
+        {
+            TShock.Log.ConsoleWarn($"【自动编译】 清理编译日志失败: {ex.Message}");
         }
     }
     #endregion

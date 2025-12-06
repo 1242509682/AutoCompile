@@ -129,7 +129,6 @@ internal class Cmd
             msg.AppendLine("当前配置:");
             msg.AppendLine($"  启用: {(cfg.Enabled ? "是" : "否")}");
             msg.AppendLine($"  语言版本: {cfg.LangVer}");
-            msg.AppendLine($"  重试次数: {cfg.RetryCount}");
             msg.AppendLine($"  源码路径: {CodePath}");
             msg.AppendLine($"  引用路径: {AsmPath}");
             msg.AppendLine($"  输出路径: {OutPath}");

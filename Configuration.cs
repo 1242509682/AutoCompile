@@ -13,20 +13,20 @@ internal class Configuration
     public bool Enabled = true;
     [JsonProperty("包含子目录", Order = 1)]
     public bool IncludeSub = true;
-    [JsonProperty("智能修复重试次数", Order = 2)]
-    public int RetryCount = 3;
-    [JsonProperty("编译失败日志显示英文", Order = 3)]
+    [JsonProperty("编译失败日志显示英文", Order = 2)]
     public bool ShowErrorEnglish { get; set; } = true;
-    [JsonProperty("编译失败日志显示中文", Order = 4)]
+    [JsonProperty("编译失败日志显示中文", Order = 3)]
     public bool ShowErrorChinese { get; set; } = true;
-    [JsonProperty("成功后清失败日志文件", Order = 5)]
+    [JsonProperty("成功后清失败日志文件", Order = 4)]
     public bool ClearLogs = true;
-    [JsonProperty("语言版本", Order = 6)]
+    [JsonProperty("语言版本", Order = 5)]
     public string LangVer = "CSharp11";
-    [JsonProperty("最大文件数", Order = 7)]
+    [JsonProperty("最大文件数", Order = 6)]
     public int MaxFiles = 100;
-    [JsonProperty("最大大小MB", Order = 8)]
+    [JsonProperty("最大大小MB", Order = 7)]
     public int MaxSizeMB = 50;
+    [JsonProperty("移除指定using语句", Order = 8)]
+    public List<string> RemoveUsings = new List<string>();
     [JsonProperty("默认给源码添加引用", Order = 9)]
     public List<string> Usings = new List<string>();
     [JsonProperty("系统程序集", Order = 10)]
@@ -48,13 +48,21 @@ internal class Configuration
            "最大大小MB: 所有.cs文件总大小限制",
            "默认添加引用: 为所有cs文件添加默认引用" +
            "(已存在则不添加,只需写命名空间自动添加using)",
-            "【智能修复】",
-           "当编译出现缺失命名空间错误时，插件会自动:",
-           "1. 分析错误信息，提取缺失的命名空间",
-           "2. 从源代码中移除相关的using语句",
-           "3. 重新尝试编译",
-           "4. 根据配置的重试次数重复此过程",
+            "移除using语句:自动移除已存在的using语句",
            "注意：暂时不支持内嵌资源的插件生成",
+        };
+
+        RemoveUsings = new List<string>()
+        {
+            "Steamworks",
+            "System.Numerics",
+            "System.Security.Policy",
+            "Org.BouncyCastle.Asn1.Cmp",
+            "Org.BouncyCastle.Asn1.X509",
+            "NuGet.Protocol.Plugins",
+            "Org.BouncyCastle.Math.EC.ECCurve",
+            "using static Org.BouncyCastle.Math.EC.ECCurve;",
+            "using static MonoMod.InlineRT.MonoModRule;",
         };
 
         Usings = new List<string>()
@@ -171,7 +179,7 @@ internal class Configuration
         {
             var NewConfig = new Configuration();
             NewConfig.SetDefault();
-            new Configuration().Write();
+            NewConfig.Write();
             return NewConfig;
         }
         else
