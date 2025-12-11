@@ -1,9 +1,11 @@
 using System.Diagnostics;
+using System.Reflection;
 using System.Text;
 using System.Text.RegularExpressions;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.Emit;
+using Terraria;
 using TShockAPI;
 
 namespace AutoCompile;
@@ -30,7 +32,7 @@ public class CompResult
 }
 #endregion
 
-internal class Compiler
+public class Compiler
 {
     public static readonly object LockObj = new();
 
@@ -41,7 +43,6 @@ internal class Compiler
         {
             // 修复中文编码用的
             Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
-            TShock.Log.ConsoleInfo("【自动编译】 编码提供程序已注册");
         }
         catch (Exception ex)
         {
@@ -114,25 +115,17 @@ internal class Compiler
     {
         // 使用局部变量，让它们尽早离开作用域
         List<SyntaxTree>? trees = null;
-        HashSet<string>? refs = null;
         List<string>? skp = null;
         List<string>? err = null;
 
         try
         {
             Utils.CleanOutFiles(); // 清理旧文件
-
-            refs = new HashSet<string>();
             skp = new List<string>();
             err = new List<string>();
             trees = new List<SyntaxTree>();
 
             TShock.Log.ConsoleInfo("【自动编译】 开始添加引用...");
-            // 1. 添加TS程序集引用
-            AddTShockReferences(refs);
-            // 2. 系统程序集 - 添加更多基础程序集
-            AddSystemReferences(refs);
-            TShock.Log.ConsoleInfo($"【自动编译】 总共添加了 {refs.Count} 个引用\n (含bin文件夹 5个 + TShockAPI 1个)");
 
             // 遍历所有文件
             foreach (var f in files)
@@ -197,11 +190,7 @@ internal class Compiler
             }
 
             // 创建元数据引用
-            var rfs = refs
-                .Where(File.Exists)
-                .Select(r => MetadataReference.CreateFromFile(r))
-                .ToList();
-
+            var rfs = GetMetaRefs();
             if (rfs.Count == 0) return CompResult.Fail("无有效引用");
 
             // 获取插件名称
@@ -235,14 +224,15 @@ internal class Compiler
         }
         finally
         {
-            // 清理内存
-            ClearMem(trees, refs, skp, err);
+           
+            ClearMem(trees, skp, err);  // 清理内存
+            ClearMetaRefs(); // 清理编译元数据缓存
         }
     }
     #endregion
 
     #region 为代码添加默认 using
-    private static string AddUsings(string code)
+    public static string AddUsings(string code)
     {
         if (string.IsNullOrWhiteSpace(code))
             return code;
@@ -270,7 +260,7 @@ internal class Compiler
     #endregion
 
     #region 移除指定Using语句
-    private static string RemoveUsings(string code)
+    public static string RemoveUsings(string code)
     {
         var rm = AutoCompile.Config.RemoveUsings;
         if (rm == null || rm.Count == 0) return code;
@@ -299,12 +289,10 @@ internal class Compiler
     #endregion
 
     #region 添加系统运行时程序集
-    private static void AddSystemReferences(HashSet<string> refs)
+    public static void AddSystemReferences(HashSet<string> refs)
     {
         try
         {
-            int added = 0;
-
             // 获取.NET运行时的系统程序集目录
             var runtime = Path.GetDirectoryName(typeof(object).Assembly.Location);
 
@@ -315,20 +303,15 @@ internal class Compiler
                 foreach (var ass in Asse)
                 {
                     var file = Path.Combine(runtime, ass);
-
                     if (File.Exists(file) && !refs.Contains(file))
                     {
                         refs.Add(file);
-                        added++;
                     }
                     else
                     {
                         TShock.Log.ConsoleError($"【自动编译】 文件不存在 {file} ");
                     }
                 }
-
-                if (added > 0)
-                    TShock.Log.ConsoleInfo($"【自动编译】 添加了 {added} 个系统程序集");
             }
         }
         catch (Exception ex)
@@ -339,11 +322,10 @@ internal class Compiler
     #endregion
 
     #region 添加TS程序集引用
-    private static void AddTShockReferences(HashSet<string> refs)
+    public static void AddTShockReferences(HashSet<string> refs)
     {
         try
         {
-            var count = 0;
             var dir = Path.Combine(Configuration.Paths, "程序集");
             // 1. 首先添加插件指定“程序集”文件夹中的所有DLL文件
             if (Directory.Exists(dir))
@@ -358,7 +340,6 @@ internal class Compiler
                         if (Utils.IsValidDll(dllPath))
                         {
                             refs.Add(dllPath);
-                            count++;
                         }
                         else
                         {
@@ -367,9 +348,6 @@ internal class Compiler
                     }
                 }
             }
-
-            if (count > 0)
-                TShock.Log.ConsoleInfo($"【自动编译】 从‘程序集’添加了 {count} 个引用");
 
             // 2.添加TShockAPI.dll
             var PluginsDir = Path.Combine(typeof(TShock).Assembly.Location, "ServerPlugins");
@@ -409,7 +387,7 @@ internal class Compiler
 
     #region 创建编译
     private static EmitResult CreateComp(List<SyntaxTree>? trees,
-        List<PortableExecutableReference> rfs,
+        List<MetadataReference> rfs,
         string pluginName, string dllPath, string pdbPath)
     {
         try
@@ -453,7 +431,7 @@ internal class Compiler
     #endregion
 
     #region 错误处理
-    private static CompResult ErrorMess(string pluginName, EmitResult er)
+    public static CompResult ErrorMess(string pluginName, EmitResult er)
     {
         try
         {
@@ -500,14 +478,51 @@ internal class Compiler
     }
     #endregion
 
+    #region 脚本编译错误处理
+    public static CompResult ErrorScript(string scriptName, List<Diagnostic> errors)
+    {
+        try
+        {
+            var sb = new StringBuilder();
+            sb.AppendLine($"\n❌ 脚本编译失败 [{scriptName}]");
+            sb.AppendLine("-".PadRight(40, '-'));
+            var errs = errors.Where(d => d.Severity == DiagnosticSeverity.Error).ToList();
+
+            // 按错误类型分组显示
+            var ByFile = errs
+                .GroupBy(err => Utils.GetFileName(err))
+                .OrderBy(g => g.Key)
+                .ToList();
+
+            sb.AppendLine($" 发现 {errs.Count} 个错误，分布在 {ByFile.Count} 个文件中:");
+
+            foreach (var group in ByFile)
+            {
+                var name = group.Key;
+                var count = group.Count();
+                sb.AppendLine($" 📁 {name} - {count}个错误");
+            }
+          
+            TShock.Log.ConsoleError(sb.ToString());   // 记录到控制台
+            LogsMag.LogErrFile(scriptName, errs); // 记录到日志文件
+            return CompResult.Fail($"脚本编译失败，共{errs.Count}个错误,请查看《自动编译》-《编译日志》");
+        }
+        catch (Exception ex)
+        {
+            TShock.Log.ConsoleError($"❌ 脚本编译失败 [{scriptName}]");
+            TShock.Log.ConsoleError($"错误异常: {ex.Message}");
+            return CompResult.Fail("脚本编译失败");
+        }
+    }
+    #endregion
+
     #region 结束编译清理内存
-    private static void ClearMem(List<SyntaxTree>? trees, HashSet<string>? refs, List<string>? skp, List<string>? err)
+    private static void ClearMem(List<SyntaxTree>? trees, List<string>? skp, List<string>? err)
     {
         try
         {
             // 1.清理集合，让它们可以被GC
             trees?.Clear();
-            refs?.Clear();
             skp?.Clear();
             err?.Clear();
 
@@ -532,12 +547,83 @@ internal class Compiler
             {
                 TShock.Log.ConsoleInfo($"【内存清理】 释放了 {freed / 1024 / 1024:F2} MB");
             }
+
+            ClearMetaRefs(); // 清理元数据引用缓存
         }
         catch (Exception ex)
         {
             TShock.Log.ConsoleWarn($"【自动编译】 内存清理异常: {ex.Message}");
         }
-    } 
+    }
     #endregion
 
+    #region 获取元数据引用
+    private static List<MetadataReference> metaRefs; // 缓存元数据引用
+    public static List<MetadataReference> GetMetaRefs()
+    {
+        lock (LockObj)
+        {
+            if (metaRefs == null)
+            {
+                var refs = new HashSet<string>();
+                AddTShockReferences(refs);
+                AddSystemReferences(refs);
+                var abRefs = new List<string>();
+                foreach (var r in refs)
+                {
+                    try
+                    {
+                        var Paths = Path.GetFullPath(r);
+                        if (File.Exists(Paths))
+                        {
+                            abRefs.Add(Paths);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        TShock.Log.ConsoleWarn($"无法将路径转换为绝对路径，跳过: {r}, 错误: {ex.Message}");
+                    }
+                }
+
+                metaRefs = abRefs.Select(r => (MetadataReference)MetadataReference.CreateFromFile(r)).ToList();
+            }
+            return metaRefs;
+        }
+    }
+    #endregion
+
+    #region 清除元数据引用缓存
+    public static void ClearMetaRefs()
+    {
+        lock (LockObj)
+        {
+            if (metaRefs != null)
+            {
+                // 显式释放每个MetadataReference
+                foreach (var metaRef in metaRefs)
+                {
+                    // MetadataReference没有Dispose，但可清除引用链
+                    // 对于非托管资源，确保释放
+                    if (metaRef is IDisposable disposable)
+                        disposable.Dispose();
+                }
+                metaRefs.Clear();
+                metaRefs = null;
+
+                // 清理可能存在的静态编译器缓存
+                typeof(CSharpCompilation)
+                            .GetField("s_commonSyntaxTrees", BindingFlags.Static | BindingFlags.NonPublic)?
+                            .SetValue(null, null);
+            }
+
+            // 分代清理策略
+            GC.Collect(0, GCCollectionMode.Forced);
+            Thread.Sleep(10);
+            GC.Collect(1, GCCollectionMode.Forced);
+            Thread.Sleep(10);
+            GC.Collect(2, GCCollectionMode.Forced, true);
+            GC.WaitForPendingFinalizers();
+        }
+    }
+    #endregion
 }

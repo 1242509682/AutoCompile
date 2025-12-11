@@ -13,7 +13,7 @@ public class AutoCompile : TerrariaPlugin
     #region 插件信息
     public override string Name => "自动编译插件";
     public override string Author => "羽学";
-    public override Version Version => new(1, 0, 3);
+    public override Version Version => new(1, 0, 4);
     public override string Description => "使用指令自动编译CS为DLL";
     #endregion
 
@@ -59,11 +59,13 @@ public class AutoCompile : TerrariaPlugin
         var asm = Assembly.GetExecutingAssembly();
         var files = new List<string>
         {
+            "System.Reflection.Metadata.dll",
+            "System.Collections.Immutable.dll",
             "System.Text.Encoding.CodePages.dll",
             "Microsoft.CodeAnalysis.dll",
             "Microsoft.CodeAnalysis.CSharp.dll",
-            "System.Collections.Immutable.dll",
-            "System.Reflection.Metadata.dll"
+            "Microsoft.CodeAnalysis.CSharp.Scripting.dll",
+            "Microsoft.CodeAnalysis.Scripting.dll",
         };
 
         foreach (var file in files)
