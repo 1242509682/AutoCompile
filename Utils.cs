@@ -547,4 +547,19 @@ internal class Utils
     }
     #endregion
 
+    #region 计算哈希值
+    public static string CalcHash(string code, List<string> usings)
+    {
+        var sb = new StringBuilder(code);
+        if (usings != null)
+        {
+            foreach (var use in usings.OrderBy(u => u))
+            {
+                sb.Append(use);
+            }
+        }
+        return sb.ToString().GetHashCode().ToString();
+    } 
+    #endregion
+
 }

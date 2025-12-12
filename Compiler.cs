@@ -607,13 +607,9 @@ public class Compiler
                     if (metaRef is IDisposable disposable)
                         disposable.Dispose();
                 }
+
                 metaRefs.Clear();
                 metaRefs = null;
-
-                // 清理可能存在的静态编译器缓存
-                typeof(CSharpCompilation)
-                            .GetField("s_commonSyntaxTrees", BindingFlags.Static | BindingFlags.NonPublic)?
-                            .SetValue(null, null);
             }
 
             // 分代清理策略

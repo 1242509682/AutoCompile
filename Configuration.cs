@@ -86,6 +86,8 @@ internal class Configuration
             "System.Net.Http",
             "System.Runtime.CompilerServices",
             "System.Runtime.InteropServices",
+            "Terraria",
+            "TShockAPI",
             "Microsoft.Xna.Framework",
         };
 

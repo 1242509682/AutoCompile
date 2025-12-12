@@ -3,31 +3,23 @@ using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp.Scripting;
 using Microsoft.CodeAnalysis.Scripting;
 using TShockAPI;
+using static AutoCompile.AutoCompile;
 
 namespace AutoCompile;
 
 public class ScriptExec : IDisposable
 {
     private readonly Dictionary<string, ScriptRunner<object>> cache; // 脚本缓存
+    private readonly Dictionary<string, string> hashMap; // 脚本哈希表(检查是否修改用于判断重新编译)
     private readonly object lockObj = new();
     private bool isDisposed = false; // 是否已释放
-    private readonly List<string> ExtraAsse; // 额外程序集
-    private readonly Type global; // 脚本可用的全局变量类
+    private readonly Type global; // 编写脚本时用全局变量类
 
-    public ScriptExec(Type globals = null, List<string> extra = null)
+    public ScriptExec(Type globals = null)
     {
         cache = new Dictionary<string, ScriptRunner<object>>(StringComparer.OrdinalIgnoreCase);
-        this.ExtraAsse = extra ?? new List<string>();
+        hashMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         this.global = globals;
-
-        if (globals != null)
-        {
-            var assemblyPath = globals.Assembly.Location;
-            if (File.Exists(assemblyPath) && !this.ExtraAsse.Contains(assemblyPath))
-            {
-                this.ExtraAsse.Add(assemblyPath);
-            }
-        }
     }
 
     #region 预编译脚本方法
@@ -37,48 +29,53 @@ public class ScriptExec : IDisposable
         {
             lock (lockObj)
             {
-                if (cache.ContainsKey(name))
+                // 计算哈希
+                var newHash = Utils.CalcHash(code, usings);
+
+                // 检查是否已缓存
+                if (cache.ContainsKey(name) &&
+                    hashMap.TryGetValue(name, out var oldHash) && 
+                    oldHash == newHash)
                     return CompResult.Success("已缓存");
 
-                // 使用 Compiler 的默认 using
-                code = Compiler.AddUsings(code);
-                code = Compiler.RemoveUsings(code);
+                // 清理旧的缓存
+                if (cache.ContainsKey(name)) cache.Remove(name);
 
                 // 添加额外的 usings
                 if (usings?.Count > 0)
                 {
+                    // 获取当前代码中已有的 using
+                    var existing = Utils.GetExistUsings(code);
+
+                    // 过滤掉已经存在的 using
                     var fmtUsgs = Utils.FmtUsings(usings);
-                    if (!string.IsNullOrEmpty(fmtUsgs))
-                        code = fmtUsgs + code;
+                    var toAdd = Utils.FilterUsings(fmtUsgs, existing);
+
+                    if (!string.IsNullOrEmpty(toAdd))
+                        code = toAdd + code;
                 }
 
                 // 创建脚本
                 var options = CreateOptions();
 
-                Script<object> script;
-
-                if (global == null)
-                {
-                    script = CSharpScript.Create<object>(code, options);
-                }
-                else
-                {
-                    script = CSharpScript.Create<object>(code, options, global);
-                }
+                Script<object> script = global == null
+                ? CSharpScript.Create<object>(code, options)
+                : CSharpScript.Create<object>(code, options, global);
 
                 // 检查编译错误
-                var comp = script.GetCompilation();
-                var errors = comp.GetDiagnostics()
-                    .Where(d => d.Severity == DiagnosticSeverity.Error)
-                    .ToList();
+                var error = script.GetCompilation()
+                                   .GetDiagnostics()
+                                   .Where(d => d.Severity == DiagnosticSeverity.Error)
+                                   .ToList();
 
-                if (errors.Count > 0)
+                if (error.Count > 0)
                 {
-                    return Compiler.ErrorScript(name, errors);
+                    return Compiler.ErrorScript(name, error);
                 }
 
-                // 创建运行器（使用RunAsync来获取ScriptRunner）
+                // 创建运行器并保存哈希
                 cache[name] = script.CreateDelegate();
+                hashMap[name] = newHash;
                 return CompResult.Success("编译成功");
             }
         }
@@ -89,13 +86,29 @@ public class ScriptExec : IDisposable
     }
     #endregion
 
+    #region 重新编译方法
+    public CompResult Recompile(string name, string code, List<string> usings)
+    {
+        lock (lockObj)
+        {
+            if (cache.ContainsKey(name))
+                cache.Remove(name);
+
+            if (hashMap.ContainsKey(name))
+                hashMap.Remove(name);
+
+            return PreCompile(name, code, usings);
+        }
+    }
+    #endregion
+
     #region 执行器
     // 异步执行脚本
     public async Task<CompResult> AsyncRun(string name, object globals, int timeout = 5000)
     {
         try
         {
-            ScriptRunner<object> runner;
+            ScriptRunner<object>? runner;
 
             lock (lockObj)
             {
@@ -107,7 +120,7 @@ public class ScriptExec : IDisposable
             if (await Task.WhenAny(task, Task.Delay(timeout)) == task)
             {
                 var result = await task;
-                return CompResult.Success(result?.ToString());
+                return CompResult.Success(result?.ToString()!);
             }
 
             return CompResult.Fail($"执行超时 ({timeout}ms)");
@@ -119,11 +132,11 @@ public class ScriptExec : IDisposable
     }
 
     // 同步执行脚本
-    public CompResult SyncRun(string name, object globals, int timeout = 5000)
+    public CompResult SyncRun(string name, object globals)
     {
         try
         {
-            ScriptRunner<object> runner;
+            ScriptRunner<object>? runner;
 
             lock (lockObj)
             {
@@ -132,54 +145,26 @@ public class ScriptExec : IDisposable
             }
 
             var task = runner(globals);
-            if (task.Wait(timeout))
-            {
-                var result = task.Result;
-                return CompResult.Success(result?.ToString());
-            }
-
-            return CompResult.Fail($"执行超时 ({timeout}ms)");
+            var awaiter = task.GetAwaiter();
+            var result = awaiter.GetResult();
+            return CompResult.Success(result?.ToString()!);
         }
         catch (Exception ex)
         {
             return CompResult.Fail($"执行异常: {ex.Message}");
         }
-    } 
+    }
     #endregion
 
-    #region 辅助方法
+    #region 创建脚本选项
     private ScriptOptions CreateOptions()
     {
         Compiler.ClearMetaRefs(); // 清理旧的元数据引用
 
         var refs = Compiler.GetMetaRefs();
 
-        // 添加额外的程序集引用
-        foreach (var Path in ExtraAsse)
-        {
-            if (File.Exists(Path))
-            {
-                try
-                {
-                    var refToAdd = MetadataReference.CreateFromFile(Path);
-                    refs.Add(refToAdd);
-                }
-                catch { }
-            }
-        }
-
         // 默认导入
-        var imports = new List<string>
-        {
-            "System",
-            "System.Linq",
-            "System.Text",
-            "System.Threading.Tasks",
-            "System.Collections.Generic",
-            "Terraria",
-            "TShockAPI",
-            "Microsoft.Xna.Framework"
-        };
+        var imports = Config.Usings;
 
         if (global != null && !string.IsNullOrEmpty(global.Namespace))
         {
@@ -190,12 +175,14 @@ public class ScriptExec : IDisposable
             .WithReferences(refs)
             .WithImports(imports)
             .WithOptimizationLevel(OptimizationLevel.Release)
-            .WithAllowUnsafe(true);
+            .WithAllowUnsafe(true)
+            .WithEmitDebugInformation(false)  // 禁用调试信息以减少内存
+            .WithCheckOverflow(false);        // 禁用溢出检查提升性能
     }
     #endregion
 
     #region 批量预编译
-    public CompResult BatchCompile(string scriptDir, List<string> usings, bool Enabled)
+    public CompResult BatchCompile(string scriptDir, List<string> usings)
     {
         try
         {
@@ -206,6 +193,7 @@ public class ScriptExec : IDisposable
             int total = files.Length;
             int yes = 0;
             int no = 0;
+            int ce = 0;
 
             foreach (var filePath in files)
             {
@@ -214,50 +202,50 @@ public class ScriptExec : IDisposable
                     var fileName = Path.GetFileNameWithoutExtension(filePath);
                     var code = File.ReadAllText(filePath, Encoding.UTF8);
 
-                    CompResult result;
-                    if (Enabled)
-                    {
-                        result = PreCompile(fileName, code, usings);
-                    }
-                    else
-                    {
-                        // 只是检查语法
-                        var script = CSharpScript.Create<object>(code, CreateOptions());
-                        var comp = script.GetCompilation();
-                        var errors = comp.GetDiagnostics()
-                            .Where(d => d.Severity == DiagnosticSeverity.Error)
-                            .ToList();
-
-                        result = errors.Count == 0
-                            ? CompResult.Success("语法正确")
-                            : Compiler.ErrorScript(fileName, errors);
-                    }
-
-                    if (result.Ok)
+                    CompResult result = PreCompile(fileName, code, usings);
+                    if (result.Ok && result.Msg != "已缓存")
                     {
                         yes++;
-                        TShock.Log.ConsoleInfo($"[自动编译] 脚本编译成功: {fileName}");
+                        TShock.Log.ConsoleInfo($"[自动编译] {fileName} (编译成功)");
+                    }
+                    else if (result.Msg == "已缓存")
+                    {
+                        ce++;
+                        TShock.Log.ConsoleInfo($"[自动编译] {fileName} (使用缓存)");
                     }
                     else
                     {
                         no++;
-                        TShock.Log.ConsoleError($"[自动编译] 脚本编译失败: {fileName} - {result.Msg}");
+                        TShock.Log.ConsoleError($"[自动编译] {fileName} (编译失败)\n" +
+                                                $"{result.Msg}");
                     }
                 }
                 catch (Exception ex)
                 {
                     no++;
-                    TShock.Log.ConsoleError($"[自动编译] 脚本编译异常: {ex.Message}");
+                    TShock.Log.ConsoleError($"[自动编译] 编译异常: {ex.Message}");
                 }
             }
 
-            var msg = $"[自动编译] 批量编译完成 总数{total}, 成功{yes}, 失败{no}";
+            // 动态构建消息，只显示存在的数量
+            var part = new List<string>{ $"总计'{total}个'脚本" };
+            if (yes > 0) part.Add($"编译成功{yes}个");
+            if (ce > 0) part.Add($"使用缓存{ce}个");
+            if (no > 0) part.Add($"编译失败{no}个");
+            var msg = $"\n[自动编译] {string.Join(" ", part)}";
             TShock.Log.ConsoleInfo(msg);
+            TShock.Log.ConsoleInfo($"[自动编译] 脚本存放路径 {scriptDir}\n");
             return CompResult.Success(msg);
         }
         catch (Exception ex)
         {
             return CompResult.Fail($"批量编译异常: {ex.Message}");
+        }
+        finally
+        {
+            // 编译后立即清理元数据引用，释放内存
+            Compiler.ClearMetaRefs();
+            GC.Collect(2, GCCollectionMode.Default);
         }
     }
     #endregion
@@ -280,36 +268,19 @@ public class ScriptExec : IDisposable
                     // 彻底清空缓存
                     if (cache != null)
                     {
-                        foreach (var kvp in cache.ToList())  // 复制列表避免迭代异常
-                        {
-                            cache[kvp.Key] = null;
-                        }
                         cache.Clear();
                     }
-                }
 
-                // 清空额外程序集引用
-                if (ExtraAsse != null)
-                {
-                    ExtraAsse.Clear();
+                    if (hashMap != null)
+                    {
+                        hashMap.Clear();
+                    }
                 }
 
                 // 强制清理编译器资源
                 Compiler.ClearMetaRefs();
             }
             isDisposed = true;
-        }
-    }
-
-    // 给调用它的插件用的 因为不知道对方什么时候开始编译 先保留方法
-    public void ClearCache(string name = null)
-    {
-        lock (lockObj)
-        {
-            if (name == null)
-                cache.Clear();
-            else
-                cache.Remove(name);
         }
     }
     #endregion
