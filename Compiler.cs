@@ -422,9 +422,9 @@ public class Compiler
                 }
             }
 
-            // 2.添加 ServerPlugins 文件夹所有DLL
+            // 2.添加 ServerPlugins 文件夹所有DLL（仅当前文件夹，不扫描子文件夹）
             var PluginsDir = Path.Combine(typeof(TShock).Assembly.Location, "ServerPlugins");
-            var dllFiles2 = Directory.GetFiles(PluginsDir, "*.dll", SearchOption.AllDirectories);
+            var dllFiles2 = Directory.GetFiles(PluginsDir, "*.dll", SearchOption.TopDirectoryOnly);
             foreach (var path2 in dllFiles2)
             {
                 if (File.Exists(path2) && !refs.Contains(path2))
