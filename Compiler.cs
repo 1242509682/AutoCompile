@@ -117,6 +117,7 @@ public class Compiler
         List<SyntaxTree>? trees = null;
         List<string>? skp = null;
         List<string>? err = null;
+        List<MetadataReference> rfs = null;
 
         try
         {
@@ -127,9 +128,21 @@ public class Compiler
 
             TShock.Log.ConsoleInfo("【自动编译】 开始添加引用...");
 
+            rfs = GetMetaRefs();
+            if (rfs.Count == 0) return CompResult.Fail("无有效引用");
+
+            TShock.Log.ConsoleInfo($"【自动编译】 已加载 {rfs.Count} 个引用");
+
+            int total = files.Length;
+            int proc = 0;
+
+            TShock.Log.ConsoleInfo($"【自动编译】 开始处理 {total} 个源文件...");
+
             // 遍历所有文件
             foreach (var f in files)
             {
+                proc++;
+
                 try
                 {
                     var fi = new FileInfo(f);
@@ -164,11 +177,21 @@ public class Compiler
                         encoding: Encoding.UTF8
                     );
                     trees.Add(tree);
+
+                    // 显示处理进度（每10%显示一次，或者每个文件都显示）
+                    double tage = (double)proc / total * 100;
+
+                    // 显示进度条
+                    DisplayProgress("解析源码", proc, total, tage);
                 }
                 catch (Exception ex)
                 {
                     err.Add($"{Path.GetFileName(f)}: {ex.Message}");
                     TShock.Log.ConsoleError($"【自动编译】 解析 {Path.GetFileName(f)} 失败: {ex.Message}");
+
+                    // 出错时也显示进度
+                    double tage = (double)proc / total * 100;
+                    DisplayProgress("解析源码", proc, total, tage);
                 }
             }
 
@@ -189,29 +212,36 @@ public class Compiler
                 return CompResult.Fail(msg);
             }
 
-            // 创建元数据引用
-            var rfs = GetMetaRefs();
-            if (rfs.Count == 0) return CompResult.Fail("无有效引用");
+            TShock.Log.ConsoleInfo($"【自动编译】 解析完成，共 {trees.Count} 个有效文件");
+            TShock.Log.ConsoleInfo("【自动编译】 开始编译生成DLL...");
 
             // 获取插件名称
-            var pluginName = Utils.GetPluginName(trees);
-            if (string.IsNullOrEmpty(pluginName)) pluginName = "MyPlugin";
+            var pName = Utils.GetPluginName(trees);
+            if (string.IsNullOrEmpty(pName)) pName = "MyPlugin";
             var outDir = Path.Combine(Configuration.Paths, "编译输出");
-            var dllName = $"{Utils.CleanName(pluginName)}.dll";
+            var dllName = $"{Utils.CleanName(pName)}.dll";
             var dllPath = Path.Combine(outDir, dllName);
             var pdbPath = Path.ChangeExtension(dllPath, ".pdb");
 
-            EmitResult er = CreateComp(trees, rfs, pluginName, dllPath, pdbPath);
+            // 显示编译进度
+            TShock.Log.ConsoleInfo($"【自动编译】 正在编译: {pName}");
+
+            EmitResult er = CreateComp(trees, rfs, pName, dllPath, pdbPath);
 
             // 编译失败处理
             if (!er.Success)
             {
                 // 返回错误信息
-                return ErrorMess(pluginName, er);
+                return ErrorMess(pName, er);
             }
 
-            LogsMag.LogCompile(pluginName, dllPath, pdbPath);
+            LogsMag.LogCompile(pName, dllPath, pdbPath);
             Utils.ClearLogs(); // 成功后清理日志
+
+            // 显示成功信息
+            TShock.Log.ConsoleInfo($"【自动编译】 编译完成: {pName}");
+            TShock.Log.ConsoleInfo($"【自动编译】 DLL路径: {dllPath}");
+
             return CompResult.Success("编译完成", new List<string> { dllPath });
         }
         catch (OutOfMemoryException)
@@ -224,9 +254,52 @@ public class Compiler
         }
         finally
         {
-           
-            ClearMem(trees, skp, err);  // 清理内存
+            ClearMem(trees, skp, err, rfs);  // 清理内存
             ClearMetaRefs(); // 清理编译元数据缓存
+        }
+    }
+    #endregion
+
+    #region 显示进度条
+    public static void DisplayProgress(string stage, int curr, int total, double tage)
+    {
+        // 每10%显示一次，或者每个文件都显示（根据总数决定）
+        bool Display = false;
+
+        if (total <= 10)
+        {
+            // 文件少时每个都显示
+            Display = true;
+        }
+        else if (total <= 50)
+        {
+            // 每处理10%显示一次
+            int step = Math.Max(1, total / 10);
+            Display = curr % step == 0 || curr == total;
+        }
+        else
+        {
+            // 文件多时每处理5%显示一次
+            int step = Math.Max(1, total / 20);
+            Display = curr % step == 0 || curr == total;
+        }
+
+        if (Display)
+        {
+            // 进度条长度
+            int barWidth = 20;
+            int progWidth = (int)(barWidth * tage / 100);
+            string progBar = new string('█', progWidth) +
+                                 new string('░', barWidth - progWidth);
+
+            // 在同一行显示进度
+            Console.Write($"\r【自动编译】 {stage}: [{progBar}] {tage:F1}% ({curr}/{total})");
+
+            // 如果是最后一个文件，换行
+            if (curr == total)
+            {
+                Console.WriteLine();
+            }
         }
     }
     #endregion
@@ -349,12 +422,15 @@ public class Compiler
                 }
             }
 
-            // 2.添加TShockAPI.dll
+            // 2.添加 ServerPlugins 文件夹所有DLL
             var PluginsDir = Path.Combine(typeof(TShock).Assembly.Location, "ServerPlugins");
-            var path2 = Path.Combine(PluginsDir, "TShockAPI.dll");
-            if (File.Exists(path2) && !refs.Contains(path2))
+            var dllFiles2 = Directory.GetFiles(PluginsDir, "*.dll", SearchOption.AllDirectories);
+            foreach (var path2 in dllFiles2)
             {
-                refs.Add(path2);
+                if (File.Exists(path2) && !refs.Contains(path2))
+                {
+                    refs.Add(path2);
+                }
             }
 
             // 3.添加TS运行核心文件（从bin目录）
@@ -502,7 +578,7 @@ public class Compiler
                 var count = group.Count();
                 sb.AppendLine($" 📁 {name} - {count}个错误");
             }
-          
+
             TShock.Log.ConsoleError(sb.ToString());   // 记录到控制台
             LogsMag.LogErrFile(scriptName, errs); // 记录到日志文件
             return CompResult.Fail($"脚本编译失败，共{errs.Count}个错误,请查看《自动编译》-《编译日志》");
@@ -517,7 +593,7 @@ public class Compiler
     #endregion
 
     #region 结束编译清理内存
-    private static void ClearMem(List<SyntaxTree>? trees, List<string>? skp, List<string>? err)
+    private static void ClearMem(List<SyntaxTree>? trees, List<string>? skp, List<string>? err, List<MetadataReference>? rfs)
     {
         try
         {
@@ -525,6 +601,18 @@ public class Compiler
             trees?.Clear();
             skp?.Clear();
             err?.Clear();
+
+            // 2. 释放 MetadataReference
+            if (rfs != null)
+            {
+                foreach (var rf in rfs)
+                {
+                    if (rf is IDisposable disposable)
+                        disposable.Dispose();
+                }
+
+                rfs.Clear();
+            }
 
             // 2. 分步GC
             long before = GC.GetTotalMemory(false);
@@ -547,8 +635,6 @@ public class Compiler
             {
                 TShock.Log.ConsoleInfo($"【内存清理】 释放了 {freed / 1024 / 1024:F2} MB");
             }
-
-            ClearMetaRefs(); // 清理元数据引用缓存
         }
         catch (Exception ex)
         {

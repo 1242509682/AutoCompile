@@ -13,7 +13,7 @@ public class AutoCompile : TerrariaPlugin
     #region 插件信息
     public override string Name => "自动编译插件";
     public override string Author => "羽学";
-    public override Version Version => new(1, 0, 5);
+    public override Version Version => new(1, 0, 6);
     public override string Description => "使用指令自动编译CS为DLL";
     #endregion
 
@@ -56,30 +56,31 @@ public class AutoCompile : TerrariaPlugin
         if (!Directory.Exists(AsmPath))
             Directory.CreateDirectory(AsmPath);
 
-        var asm = Assembly.GetExecutingAssembly();
-        var files = new List<string>
-        {
-            "System.Reflection.Metadata.dll",
-            "System.Collections.Immutable.dll",
-            "System.Text.Encoding.CodePages.dll",
-            "Microsoft.CodeAnalysis.dll",
-            "Microsoft.CodeAnalysis.CSharp.dll",
-            "Microsoft.CodeAnalysis.CSharp.Scripting.dll",
-            "Microsoft.CodeAnalysis.Scripting.dll",
-        };
+        Copy();
+        Copy2(AsmPath);
+    }
+    #endregion
 
-        foreach (var file in files)
+    #region 释放本插件依赖项与编译DLL所需程序集
+    private static void Copy()
+    {
+        var PluginPath = Path.Combine(typeof(TShock).Assembly.Location, "ServerPlugins");
+        var asm = Assembly.GetExecutingAssembly();
+        string name = asm.GetName().Name!;
+        foreach (var res in asm.GetManifestResourceNames())
         {
-            var res = $"{asm.GetName().Name}.依赖项.{file}";
+            if (!res.StartsWith($"{name}.依赖项."))
+                continue;
+
+            string fileName = res.Substring(name.Length + "依赖项.".Length + 1);
+
+            var tarPath = Path.Combine(PluginPath, fileName);
+
+            if (File.Exists(tarPath)) continue;
 
             using (var stream = asm.GetManifestResourceStream(res))
             {
                 if (stream == null) continue;
-                var tshockPath = typeof(TShock).Assembly.Location;
-                var USing = Path.Combine(tshockPath, "ServerPlugins");
-                var tarPath = Path.Combine(USing, file);
-
-                if (File.Exists(tarPath)) continue;
 
                 using (var fs = new FileStream(tarPath, FileMode.Create, FileAccess.Write, FileShare.None, 4096))
                 {
@@ -87,24 +88,19 @@ public class AutoCompile : TerrariaPlugin
                 }
             }
         }
-
-        ExtractData2(AsmPath);
     }
-    #endregion
 
-    #region 内嵌程序集管理
-    private void ExtractData2(string AsmPath)
+    private void Copy2(string path)
     {
         var asm = Assembly.GetExecutingAssembly();
-        string assemblyName = asm.GetName().Name!;
-
+        string name = asm.GetName().Name!;
         foreach (string res in asm.GetManifestResourceNames())
         {
-            if (!res.StartsWith($"{assemblyName}.程序集."))
+            if (!res.StartsWith($"{name}.程序集."))
                 continue;
 
-            string fileName = res.Substring(assemblyName.Length + "程序集.".Length + 1);
-            string tarPath = Path.Combine(AsmPath, fileName);
+            string fileName = res.Substring(name.Length + "程序集.".Length + 1);
+            string tarPath = Path.Combine(path, fileName);
 
             if (File.Exists(tarPath)) continue;
 

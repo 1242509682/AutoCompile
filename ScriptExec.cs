@@ -34,7 +34,7 @@ public class ScriptExec : IDisposable
 
                 // 检查是否已缓存
                 if (cache.ContainsKey(name) &&
-                    hashMap.TryGetValue(name, out var oldHash) && 
+                    hashMap.TryGetValue(name, out var oldHash) &&
                     oldHash == newHash)
                     return CompResult.Success("已缓存");
 
@@ -82,6 +82,10 @@ public class ScriptExec : IDisposable
         catch (Exception ex)
         {
             return CompResult.Fail($"编译异常: {ex.Message}");
+        }
+        finally
+        {
+            Compiler.ClearMetaRefs(); // 清理编译元数据缓存
         }
     }
     #endregion
@@ -159,83 +163,158 @@ public class ScriptExec : IDisposable
     #region 创建脚本选项
     private ScriptOptions CreateOptions()
     {
-        Compiler.ClearMetaRefs(); // 清理旧的元数据引用
-
+        // 默认导入
+        var imports = new List<string>();
         var refs = Compiler.GetMetaRefs();
 
-        // 默认导入
-        var imports = Config.Usings;
-
-        if (global != null && !string.IsNullOrEmpty(global.Namespace))
+        try
         {
-            imports.Add(global.Namespace);
-        }
+            if (Config.Usings != null)
+            {
+                imports.AddRange(Config.Usings);
+            }
 
-        return ScriptOptions.Default
-            .WithReferences(refs)
-            .WithImports(imports)
-            .WithOptimizationLevel(OptimizationLevel.Release)
-            .WithAllowUnsafe(true)
-            .WithEmitDebugInformation(false)  // 禁用调试信息以减少内存
-            .WithCheckOverflow(false);        // 禁用溢出检查提升性能
+            if (global != null && !string.IsNullOrEmpty(global.Namespace))
+            {
+                imports.Add(global.Namespace);
+            }
+
+            return ScriptOptions.Default
+                .WithReferences(refs)
+                .WithImports(imports)
+                .WithOptimizationLevel(OptimizationLevel.Release)
+                .WithAllowUnsafe(true)
+                .WithEmitDebugInformation(false)  // 禁用调试信息以减少内存
+                .WithCheckOverflow(false);        // 禁用溢出检查提升性能
+        }
+        finally
+        {
+            Compiler.ClearMetaRefs();
+            imports.Clear();
+            refs.Clear();
+        }
     }
     #endregion
 
-    #region 批量预编译
-    public CompResult BatchCompile(string scriptDir, List<string> usings)
+    #region 批量预编译（分阶段进度）
+    public CompResult BatchCompile(string csxDir, List<string> usings)
     {
         try
         {
-            if (!Directory.Exists(scriptDir))
-                return CompResult.Fail($"脚本目录不存在: {scriptDir}");
+            if (!Directory.Exists(csxDir))
+                return CompResult.Fail($"脚本目录不存在: {csxDir}");
 
-            var files = Directory.GetFiles(scriptDir, "*.csx", SearchOption.AllDirectories);
+            var files = Directory.GetFiles(csxDir, "*.csx", SearchOption.AllDirectories);
             int total = files.Length;
-            int yes = 0;
-            int no = 0;
-            int ce = 0;
+
+            if (total == 0)
+            {
+                TShock.Log.ConsoleInfo("\n[自动编译] 未找到脚本文件");
+                return CompResult.Success("没有可编译的脚本");
+            }
+
+            TShock.Log.ConsoleInfo($"\n[自动编译] 开始批量编译 {total} 个脚本");
+
+            // 阶段1：加载文件
+            TShock.Log.ConsoleInfo($"[自动编译] 阶段1: 加载脚本文件...");
+            var scripts = new Dictionary<string, string>();
+            int load = 0;
 
             foreach (var filePath in files)
             {
+                var fileName = Path.GetFileNameWithoutExtension(filePath);
                 try
                 {
-                    var fileName = Path.GetFileNameWithoutExtension(filePath);
                     var code = File.ReadAllText(filePath, Encoding.UTF8);
+                    scripts[fileName] = code;
+                    load++;
 
-                    CompResult result = PreCompile(fileName, code, usings);
-                    if (result.Ok && result.Msg != "已缓存")
+                    // 显示加载进度
+                    if (load % 10 == 0 || load == total)
                     {
-                        yes++;
-                        TShock.Log.ConsoleInfo($"[自动编译] {fileName} (编译成功)");
+                        double tage = (double)load / total * 100;
+                        Console.Write($"\r[自动编译] 加载进度: {tage:F1}% ({load}/{total})");
                     }
-                    else if (result.Msg == "已缓存")
+                }
+                catch (Exception ex)
+                {
+                    TShock.Log.ConsoleError($"[自动编译] 加载文件失败: {fileName} - {ex.Message}");
+                }
+            }
+            Console.WriteLine(); // 换行
+
+            // 阶段2：编译脚本
+            TShock.Log.ConsoleInfo($"[自动编译] 阶段2: 编译脚本...");
+            int comp = 0;
+            int yes = 0, no = 0, ce = 0;
+            var errors = new List<string>();
+
+            foreach (var script in scripts)
+            {
+                comp++;
+
+                // 统一计算百分比
+                double tage = (double)comp / total * 100;
+
+                try
+                {
+                    CompResult result = PreCompile(script.Key, script.Value, usings);
+                    Console.Write($"\r[自动编译] 编译进度: {tage:F1}% ({comp}/{total})");
+
+                    if (result.Ok)
                     {
-                        ce++;
-                        TShock.Log.ConsoleInfo($"[自动编译] {fileName} (使用缓存)");
+                        if (result.Msg == "已缓存")
+                            ce++;
+                        else
+                            yes++;
                     }
                     else
                     {
                         no++;
-                        TShock.Log.ConsoleError($"[自动编译] {fileName} (编译失败)\n" +
-                                                $"{result.Msg}");
+                        errors.Add($"[{script.Key}] {result.Msg}");
                     }
                 }
                 catch (Exception ex)
                 {
                     no++;
-                    TShock.Log.ConsoleError($"[自动编译] 编译异常: {ex.Message}");
+                    errors.Add($"[{script.Key}] 异常: {ex.Message}");
+                    Console.Write($"\r[自动编译] 编译进度: {tage:F1}% ({comp}/{total})");
+                }
+            }
+            Console.WriteLine(); // 换行
+
+            // 阶段3：总结报告
+            TShock.Log.ConsoleInfo($"[自动编译] 阶段3: 生成报告...");
+
+            // 漂亮的总结表格
+            Console.WriteLine("╔══════════════════════════════════════════════════════╗");
+            Console.WriteLine("║                [自动编译] 编译结果报告               ║");
+            Console.WriteLine("╠══════════════════════════════════════════════════════╣");
+            Console.WriteLine($"║  总计脚本: {total,-4}个                                    ║");
+            Console.WriteLine($"║  编译成功: {yes,-4}个                                    ║");
+            Console.WriteLine($"║  使用缓存: {ce,-4}个                                    ║");
+            Console.WriteLine($"║  编译失败: {no,-4}个                                    ║");
+            Console.WriteLine("╚══════════════════════════════════════════════════════╝");
+
+            // 错误详情
+            if (errors.Count > 0)
+            {
+                TShock.Log.ConsoleError("\n[自动编译] 错误详情:");
+                for (int i = 0; i < Math.Min(errors.Count, 5); i++)
+                {
+                    TShock.Log.ConsoleError($"  {i + 1}. {errors[i]}");
+                }
+                if (errors.Count > 5)
+                {
+                    TShock.Log.ConsoleError($"  ... 还有 {errors.Count - 5} 个错误");
                 }
             }
 
-            // 动态构建消息，只显示存在的数量
-            var part = new List<string>{ $"总计'{total}个'脚本" };
-            if (yes > 0) part.Add($"编译成功{yes}个");
-            if (ce > 0) part.Add($"使用缓存{ce}个");
-            if (no > 0) part.Add($"编译失败{no}个");
-            var msg = $"\n[自动编译] {string.Join(" ", part)}";
-            TShock.Log.ConsoleInfo(msg);
-            TShock.Log.ConsoleInfo($"[自动编译] 脚本存放路径 {scriptDir}\n");
-            return CompResult.Success(msg);
+            TShock.Log.ConsoleInfo($"[自动编译] 脚本目录: {csxDir}");
+
+            return no > 0
+                ? CompResult.Fail($"有{no}个脚本编译失败")
+                : CompResult.Success("批量编译完成");
         }
         catch (Exception ex)
         {
@@ -243,7 +322,6 @@ public class ScriptExec : IDisposable
         }
         finally
         {
-            // 编译后立即清理元数据引用，释放内存
             Compiler.ClearMetaRefs();
             GC.Collect(2, GCCollectionMode.Default);
         }
@@ -253,35 +331,29 @@ public class ScriptExec : IDisposable
     #region 释放方法
     public void Dispose()
     {
-        Dispose(true);
-        GC.SuppressFinalize(this);
-    }
-
-    private void Dispose(bool disposing)
-    {
         if (!isDisposed)
         {
-            if (disposing)
+            lock (lockObj)
             {
-                lock (lockObj)
+                // 彻底清空缓存
+                if (cache != null)
                 {
-                    // 彻底清空缓存
-                    if (cache != null)
-                    {
-                        cache.Clear();
-                    }
-
-                    if (hashMap != null)
-                    {
-                        hashMap.Clear();
-                    }
+                    cache.Clear();
                 }
 
-                // 强制清理编译器资源
-                Compiler.ClearMetaRefs();
+                if (hashMap != null)
+                {
+                    hashMap.Clear();
+                }
             }
+
+            // 强制清理编译器资源
+            Compiler.ClearMetaRefs();
+
             isDisposed = true;
         }
+
+        GC.SuppressFinalize(this);
     }
     #endregion
 }
