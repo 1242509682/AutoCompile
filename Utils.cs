@@ -91,7 +91,7 @@ internal class Utils
     }
     #endregion
 
-    #region 获取C#版本号 .net 6对应的是CSharp11
+    #region 获取C#版本号 .net 6对应的是CSharp10
     public static LanguageVersion GetLangVer()
     {
         return AutoCompile.Config.LangVer switch

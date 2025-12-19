@@ -128,7 +128,7 @@ public class Compiler
 
             TShock.Log.ConsoleInfo("【自动编译】 开始添加引用...");
 
-            rfs = GetMetaRefs();
+            rfs = GetMetaRefs(true);
             if (rfs.Count == 0) return CompResult.Fail("无有效引用");
 
             TShock.Log.ConsoleInfo($"【自动编译】 已加载 {rfs.Count} 个引用");
@@ -395,7 +395,7 @@ public class Compiler
     #endregion
 
     #region 添加TS程序集引用
-    public static void AddTShockReferences(HashSet<string> refs)
+    public static void AddTShockReferences(HashSet<string> refs, bool dll)
     {
         try
         {
@@ -424,12 +424,25 @@ public class Compiler
 
             // 2.添加 ServerPlugins 文件夹所有DLL（仅当前文件夹，不扫描子文件夹）
             var PluginsDir = Path.Combine(typeof(TShock).Assembly.Location, "ServerPlugins");
-            var dllFiles2 = Directory.GetFiles(PluginsDir, "*.dll", SearchOption.TopDirectoryOnly);
-            foreach (var path2 in dllFiles2)
+            if (dll)
             {
+                // 如果是编译插件，只添加 TShockAPI.dll（避免文件夹里存在相同插件导致引用错乱）
+                var path2 = Path.Combine(PluginsDir, "TShockAPI.dll");
                 if (File.Exists(path2) && !refs.Contains(path2))
                 {
                     refs.Add(path2);
+                }
+            }
+            else
+            {
+                // 否则编译的是C#脚本,添加所有DLL（方便编写时引用插件本身）
+                var dllFiles2 = Directory.GetFiles(PluginsDir, "*.dll", SearchOption.TopDirectoryOnly);
+                foreach (var path2 in dllFiles2)
+                {
+                    if (File.Exists(path2) && !refs.Contains(path2))
+                    {
+                        refs.Add(path2);
+                    }
                 }
             }
 
@@ -645,14 +658,14 @@ public class Compiler
 
     #region 获取元数据引用
     private static List<MetadataReference> metaRefs; // 缓存元数据引用
-    public static List<MetadataReference> GetMetaRefs()
+    public static List<MetadataReference> GetMetaRefs(bool dll = false)
     {
         lock (LockObj)
         {
             if (metaRefs == null)
             {
                 var refs = new HashSet<string>();
-                AddTShockReferences(refs);
+                AddTShockReferences(refs, dll);
                 AddSystemReferences(refs);
                 var abRefs = new List<string>();
                 foreach (var r in refs)

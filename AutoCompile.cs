@@ -14,7 +14,7 @@ public class AutoCompile : TerrariaPlugin
     public override string Name => "自动编译插件";
     public override string Author => "羽学";
     public override Version Version => new(1, 0, 6);
-    public override string Description => "使用指令自动编译CS为DLL";
+    public override string Description => "使用cs指令自动编译CS源码为DLL插件,支持其他插件引用本插件实现C#脚本编译执行";
     #endregion
 
     #region 注册卸载事件

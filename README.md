@@ -21,6 +21,7 @@ MonsterSpeed修改为自己的命名空间,用于作为注册执行器的主键
 - 定义1个string，内容为Path.Combine(TShock.SavePath, "怪物加速", "C#脚本");
 把 "怪物加速"改为你自己的想指定的文件夹,用于独立指定编译的脚本目录
 详细参考：[怪物加速的CSExecutor类](https://github.com/1242509682/MonsterSpeed/blob/master/CSExecutor.cs)
+修复：编译DLL时当已有插件在ServerPlugins文件夹里，导致源码引用自身出现的错误。
 
 v1.0.5
 优化:不再重复编译未修改的C#脚本
