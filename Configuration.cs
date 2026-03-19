@@ -31,10 +31,39 @@ internal class Configuration
     public List<string> Usings = new List<string>();
     [JsonProperty("系统程序集", Order = 10)]
     public List<string> SystemAsse = new List<string>();
+    [JsonProperty("反编译排除的程序集", Order = 11)]
+    public List<string> DeCompileExclude { get; set; } = new List<string>();
+    [JsonProperty("反编译排除的命名空间前缀", Order = 12)]
+    public List<string> DeCompileExcludeNamespaces { get; set; } = new List<string>();
 
     #region 预设参数方法
     public void SetDefault()
     {
+        DeCompileExclude =
+        [
+             "TShockAPI.dll",
+             "linq2db.dll",
+             "LazyAPI.dll",
+             "ICSharpCode.Decompiler.dll",
+             "Microsoft.CodeAnalysis.CSharp.dll",
+             "Microsoft.CodeAnalysis.CSharp.Scripting.dll",
+             "Microsoft.CodeAnalysis.dll",
+             "Microsoft.CodeAnalysis.Scripting.dll",
+             "System.Collections.Immutable.dll",
+             "System.Reflection.Metadata.dll",
+             "System.Text.Encoding.CodePages.dll",
+             "Newtonsoft.Json.dll",
+             "NuGet.Packaging.dll",
+             "GetText.dll",
+             "MySql.Data.dll",
+        ];
+
+        DeCompileExcludeNamespaces = 
+        [
+            "Microsoft",
+            "System",
+        ];
+
         UsageTips = new List<string>()
         {
            "1. 将所有.cs文件放入[自动编译]文件夹里的[源码]文件夹",

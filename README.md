@@ -7,6 +7,30 @@
 ## 更新日志
 
 ```
+v1.0.9
+优化了拆分与单文件模式的清晰度,过滤掉不相关的源码
+加入配置项【反编译排除的命名空间前缀】
+
+v1.0.8
+反编译指令不再需要手动填写文件名，而是使用列出文件索引来选择对象
+反编译支持导出插件内的内嵌资源,
+加入了【反编译排除列表】避免筛选出太多无用的dll
+/cs fby 
+无第二参数,列出所有插件(自动扫描ServerPlugins与《编译输出》文件夹)
+/cs fby 1 ——对第1个插件进行反编译,生成单文件
+/cs fby 1 -s ——按类型分割为多个.cs源码文件(推荐)
+/cs fby 1 命名空间.类名 ——仅反编译指定命名空间下的指定类
+
+v1.0.7
+支持Net9,适配TShock Beta版1770f2d
+加入了/cs fby 反编译指令,
+从ServerPlugins自动扫描.dll文件使用指令输出.cs源码
+可从程序集添加对反编译的引用
+为手游用户提供源码查看与编写便利
+输出路径为：《源码》文件夹
+读取路径为：《编译输出》文件夹与《ServerPlugins》文件夹
+支持-s参数：按类型分割.cs文件
+
 v1.0.6
 加入了脚本服务接口用于解决：
 1.处理多插件引用其编译功能时存在的命名空间污染问题
@@ -70,6 +94,7 @@ v1.0.0
 | /cs  | 无 |   compile.use    |    菜单指令    |
 | /cs on或者off | compile.use |   compile.use    |    开启或关闭插件功能    |
 | /cs by | /cs 编译 |   compile.use    |    编译所有CS源码为DLL    |
+| /cs fby | /cs 反编译 |   compile.use    |    反编译DLL成CS源码    |
 | /cs ql | /cs 清理 |   compile.use    |    清理“源码”文件夹    |
 | /cs lj | /cs 路径 |   compile.use    |    显示插件的所有路径    |
 | /cs pz | /cs 配置 |   compile.use    |    显示当前配置项    |
@@ -132,6 +157,8 @@ v1.0.0
     "System.Net.Http",
     "System.Runtime.CompilerServices",
     "System.Runtime.InteropServices",
+    "Terraria",
+    "TShockAPI",
     "Microsoft.Xna.Framework"
   ],
   "系统程序集": [
@@ -196,6 +223,23 @@ v1.0.0
     "System.Security.Cryptography.Algorithms.dll",
     "System.Security.Cryptography.Primitives.dll",
     "System.Security.Principal.dll"
+  ],
+  "反编译排除列表": [
+    "TShockAPI.dll",
+    "linq2db.dll",
+    "LazyAPI.dll",
+    "ICSharpCode.Decompiler.dll",
+    "Microsoft.CodeAnalysis.CSharp.dll",
+    "Microsoft.CodeAnalysis.CSharp.Scripting.dll",
+    "Microsoft.CodeAnalysis.dll",
+    "Microsoft.CodeAnalysis.Scripting.dll",
+    "System.Collections.Immutable.dll",
+    "System.Reflection.Metadata.dll",
+    "System.Text.Encoding.CodePages.dll",
+    "Newtonsoft.Json.dll",
+    "NuGet.Packaging.dll",
+    "GetText.dll",
+    "MySql.Data.dll"
   ]
 }
 ```

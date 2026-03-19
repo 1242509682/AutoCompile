@@ -13,7 +13,7 @@ public class AutoCompile : TerrariaPlugin
     #region 插件信息
     public override string Name => "自动编译插件";
     public override string Author => "羽学";
-    public override Version Version => new(1, 0, 6);
+    public override Version Version => new(1, 0, 9);
     public override string Description => "使用cs指令自动编译CS源码为DLL插件,支持其他插件引用本插件实现C#脚本编译执行";
     #endregion
 
@@ -25,14 +25,14 @@ public class AutoCompile : TerrariaPlugin
         ExtractData();
         LoadCfg();
         GeneralHooks.ReloadEvent += ReloadCfg;
-        TShockAPI.Commands.ChatCommands.Add(new Command("compile.use", Cmd.MainCmd, "cs"));
+        TShockAPI.Commands.ChatCommands.Add(new Command("compile.use", MyCommand.MainCmd, "cs"));
     }
     protected override void Dispose(bool disposing)
     {
         if (disposing)
         {
             GeneralHooks.ReloadEvent -= ReloadCfg;
-            TShockAPI.Commands.ChatCommands.RemoveAll(x => x.CommandDelegate == Cmd.MainCmd);
+            TShockAPI.Commands.ChatCommands.RemoveAll(x => x.CommandDelegate == MyCommand.MainCmd);
         }
         base.Dispose(disposing);
     }
@@ -78,15 +78,11 @@ public class AutoCompile : TerrariaPlugin
 
             if (File.Exists(tarPath)) continue;
 
-            using (var stream = asm.GetManifestResourceStream(res))
-            {
-                if (stream == null) continue;
+            using var stream = asm.GetManifestResourceStream(res);
+            if (stream == null) continue;
 
-                using (var fs = new FileStream(tarPath, FileMode.Create, FileAccess.Write, FileShare.None, 4096))
-                {
-                    stream.CopyTo(fs);
-                }
-            }
+            using var fs = new FileStream(tarPath, FileMode.Create, FileAccess.Write, FileShare.None, 4096);
+            stream.CopyTo(fs);
         }
     }
 
@@ -106,15 +102,11 @@ public class AutoCompile : TerrariaPlugin
 
             Directory.CreateDirectory(Path.GetDirectoryName(tarPath)!);
 
-            using (var stream = asm.GetManifestResourceStream(res))
-            {
-                if (stream == null) continue;
+            using var stream = asm.GetManifestResourceStream(res);
+            if (stream == null) continue;
 
-                using (var fs = new FileStream(tarPath, FileMode.Create, FileAccess.Write, FileShare.None, 4096))
-                {
-                    stream.CopyTo(fs);
-                }
-            }
+            using var fs = new FileStream(tarPath, FileMode.Create, FileAccess.Write, FileShare.None, 4096);
+            stream.CopyTo(fs);
         }
     }
     #endregion

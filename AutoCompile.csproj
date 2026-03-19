@@ -1,40 +1,44 @@
-<Project Sdk="Microsoft.NET.Sdk">
-	<PropertyGroup>
-		<TargetFramework>net6.0</TargetFramework>
-		<ImplicitUsings>enable</ImplicitUsings>
-		<Nullable>enable</Nullable>
-		<GenerateAssemblyInfo>false</GenerateAssemblyInfo>
-	</PropertyGroup>
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <RootNamespace>$(MSBuildProjectName)</RootNamespace>
+    <ImplicitUsings>enable</ImplicitUsings>
+	  <Nullable>enable</Nullable>
+	  <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+  </PropertyGroup>
+
 	<ItemGroup>
-	  <EmbeddedResource Include="依赖项\Microsoft.CodeAnalysis.CSharp.dll" />
-	  <EmbeddedResource Include="依赖项\Microsoft.CodeAnalysis.CSharp.Scripting.dll" />
-	  <EmbeddedResource Include="依赖项\Microsoft.CodeAnalysis.dll" />
-	  <EmbeddedResource Include="依赖项\Microsoft.CodeAnalysis.Scripting.dll" />
-	  <EmbeddedResource Include="依赖项\System.Collections.Immutable.dll" />
-	  <EmbeddedResource Include="依赖项\System.Reflection.Metadata.dll" />
-	  <EmbeddedResource Include="依赖项\System.Text.Encoding.CodePages.dll" />
-	  <EmbeddedResource Include="程序集\BCrypt.Net-Next.dll" />
-	  <EmbeddedResource Include="程序集\GetText.dll" />
-	  <EmbeddedResource Include="程序集\IP2Region.Net.dll" />
-	  <EmbeddedResource Include="程序集\Microsoft.Data.Sqlite.dll" />
-	  <EmbeddedResource Include="程序集\MySql.Data.dll" />
-	  <EmbeddedResource Include="程序集\Newtonsoft.Json.dll" />
-	  <EmbeddedResource Include="程序集\NuGet.Packaging.dll" />
-	  <EmbeddedResource Include="程序集\System.Data.Common.dll" />
-	  <EmbeddedResource Include="程序集\System.Drawing.Common.dll" />
-	  <EmbeddedResource Include="程序集\System.Drawing.Primitives.dll" />
-	  <EmbeddedResource Include="程序集\System.Threading.Tasks.Parallel.dll" />
-	  <EmbeddedResource Include="程序集\Z.Expressions.Eval.dll" />
-	  <EmbeddedResource Include="程序集\MonoMod.RuntimeDetour.dll" />
+		<EmbeddedResource Include="依赖项\ICSharpCode.Decompiler.dll" />
+		<EmbeddedResource Include="依赖项\Microsoft.CodeAnalysis.CSharp.dll" />
+		<EmbeddedResource Include="依赖项\Microsoft.CodeAnalysis.CSharp.Scripting.dll" />
+		<EmbeddedResource Include="依赖项\Microsoft.CodeAnalysis.dll" />
+		<EmbeddedResource Include="依赖项\Microsoft.CodeAnalysis.Scripting.dll" />
+		<EmbeddedResource Include="依赖项\System.Collections.Immutable.dll" />
+		<EmbeddedResource Include="依赖项\System.Reflection.Metadata.dll" />
+		<EmbeddedResource Include="依赖项\System.Text.Encoding.CodePages.dll" />
+		<EmbeddedResource Include="程序集\BCrypt.Net-Next.dll" />
+		<EmbeddedResource Include="程序集\GetText.dll" />
+		<EmbeddedResource Include="程序集\IP2Region.Net.dll" />
+		<EmbeddedResource Include="程序集\Microsoft.Data.Sqlite.dll" />
+		<EmbeddedResource Include="程序集\MySql.Data.dll" />
+		<EmbeddedResource Include="程序集\Newtonsoft.Json.dll" />
+		<EmbeddedResource Include="程序集\NuGet.Packaging.dll" />
+		<EmbeddedResource Include="程序集\System.Data.Common.dll" />
+		<EmbeddedResource Include="程序集\System.Drawing.Common.dll" />
+		<EmbeddedResource Include="程序集\System.Drawing.Primitives.dll" />
+		<EmbeddedResource Include="程序集\System.Threading.Tasks.Parallel.dll" />
+		<EmbeddedResource Include="程序集\Z.Expressions.Eval.dll" />
+		<EmbeddedResource Include="程序集\MonoMod.RuntimeDetour.dll" />
 	</ItemGroup>
-	<ItemGroup>
-		<NuGetAuditSuppress Include="https://github.com/advisories/GHSA-6qmf-mmc7-6c2p" />
-		<NuGetAuditSuppress Include="https://github.com/advisories/GHSA-68w7-72jg-6qpp" />
-		<NuGetAuditSuppress Include="https://github.com/advisories/GHSA-447r-wph3-92pm" />
-		<PackageReference Include="TShock" Version="5.2.1" />
-		<PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="5.0.0" />
-		<PackageReference Include="Microsoft.CodeAnalysis.Common" Version="5.0.0" />
-		<PackageReference Include="Microsoft.CodeAnalysis.CSharp.Scripting" Version="5.0.0" />
-		<PackageReference Include="Microsoft.CodeAnalysis.Scripting.Common" Version="5.0.0" />
-	</ItemGroup>
+
+  <ItemGroup>
+	  <PackageReference Include="ICSharpCode.Decompiler" Version="10.0.0.8282-preview2" />
+	  <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="5.0.0" />
+	  <PackageReference Include="Microsoft.CodeAnalysis.Common" Version="5.0.0" />
+	  <PackageReference Include="Microsoft.CodeAnalysis.CSharp.Scripting" Version="5.0.0" />
+	  <PackageReference Include="Microsoft.CodeAnalysis.Scripting.Common" Version="5.0.0" />
+	  <PackageReference Include="TShock" Version="6.1.0" />
+  </ItemGroup>
+
 </Project>

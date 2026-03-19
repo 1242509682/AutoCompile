@@ -1,12 +1,17 @@
-copy bin\Release\net6.0\AutoCompile.dll C:\Users\羽学\Desktop\TShock5\ServerPlugins
-rd /s /q "C:\Users\羽学\Desktop\TShock5\tshock\自动编译"
 taskkill /F /IM TShock.Server.exe
+copy bin\Release\net9.0\AutoCompile.dll C:\Users\羽学\Desktop\Beta\ServerPlugins
+copy bin\Release\net9.0\AutoCompile.pdb C:\Users\羽学\Desktop\Beta\ServerPlugins
+del C:\Users\羽学\Desktop\Beta\ServerPlugins\ICSharpCode.Decompiler.dll
+del C:\Users\羽学\Desktop\Beta\ServerPlugins\Microsoft.CodeAnalysis.CSharp.dll
+del C:\Users\羽学\Desktop\Beta\ServerPlugins\Microsoft.CodeAnalysis.CSharp.Scripting.dll
+del C:\Users\羽学\Desktop\Beta\ServerPlugins\Microsoft.CodeAnalysis.dll
+del C:\Users\羽学\Desktop\Beta\ServerPlugins\Microsoft.CodeAnalysis.Scripting.dll
+del C:\Users\羽学\Desktop\Beta\ServerPlugins\System.Collections.Immutable.dll
+del C:\Users\羽学\Desktop\Beta\ServerPlugins\System.Reflection.Metadata.dll
+del C:\Users\羽学\Desktop\Beta\ServerPlugins\System.Text.Encoding.CodePages.dll
+rd /s /q "C:\Users\羽学\Desktop\Beta\tshock\自动编译\"
 
-		<CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
 
-    <ItemGroup>
-		<NuGetAuditSuppress Include="https://github.com/advisories/GHSA-6qmf-mmc7-6c2p" />
-		<NuGetAuditSuppress Include="https://github.com/advisories/GHSA-68w7-72jg-6qpp" />
-		<NuGetAuditSuppress Include="https://github.com/advisories/GHSA-447r-wph3-92pm" />
-      <PackageReference Include="TShock" Version="5.2.1" />
-    </ItemGroup>
+  <Target Name="PostBuild" AfterTargets="PostBuildEvent">
+    <Exec Command="taskkill /F /IM TShock.Server.exe&#xD;&#xA;copy bin\Release\net9.0\AutoCompile.dll C:\Users\羽学\Desktop\Beta\ServerPlugins&#xD;&#xA;copy bin\Release\net9.0\AutoCompile.pdb C:\Users\羽学\Desktop\Beta\ServerPlugins&#xD;&#xA;del C:\Users\羽学\Desktop\Beta\ServerPlugins\ICSharpCode.Decompiler.dll&#xD;&#xA;del C:\Users\羽学\Desktop\Beta\ServerPlugins\Microsoft.CodeAnalysis.CSharp.dll&#xD;&#xA;del C:\Users\羽学\Desktop\Beta\ServerPlugins\Microsoft.CodeAnalysis.CSharp.Scripting.dll&#xD;&#xA;del C:\Users\羽学\Desktop\Beta\ServerPlugins\Microsoft.CodeAnalysis.dll&#xD;&#xA;del C:\Users\羽学\Desktop\Beta\ServerPlugins\Microsoft.CodeAnalysis.Scripting.dll&#xD;&#xA;del C:\Users\羽学\Desktop\Beta\ServerPlugins\System.Collections.Immutable.dll&#xD;&#xA;del C:\Users\羽学\Desktop\Beta\ServerPlugins\System.Reflection.Metadata.dll&#xD;&#xA;del C:\Users\羽学\Desktop\Beta\ServerPlugins\System.Text.Encoding.CodePages.dll&#xD;&#xA;rd /s /q &quot;C:\Users\羽学\Desktop\Beta\tshock\自动编译\&quot;" />
+  </Target>
