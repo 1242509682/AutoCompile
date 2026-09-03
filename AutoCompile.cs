@@ -13,7 +13,7 @@ public class AutoCompile : TerrariaPlugin
     #region 插件信息
     public override string Name => "自动编译插件";
     public override string Author => "羽学";
-    public override Version Version => new(1, 0, 9);
+    public override Version Version => new(1, 1, 0);
     public override string Description => "使用cs指令自动编译CS源码为DLL插件,支持其他插件引用本插件实现C#脚本编译执行";
     #endregion
 

@@ -31,14 +31,18 @@ internal class Configuration
     public List<string> Usings = new List<string>();
     [JsonProperty("系统程序集", Order = 10)]
     public List<string> SystemAsse = new List<string>();
-    [JsonProperty("反编译排除的程序集", Order = 11)]
+    [JsonProperty("编译时排除的程序集", Order = 11)]
+    public List<string> CompileExclude { get; set; } = new List<string>();
+    [JsonProperty("反编译排除的程序集", Order = 12)]
     public List<string> DeCompileExclude { get; set; } = new List<string>();
-    [JsonProperty("反编译排除的命名空间前缀", Order = 12)]
+    [JsonProperty("反编译排除的命名空间前缀", Order = 13)]
     public List<string> DeCompileExcludeNamespaces { get; set; } = new List<string>();
 
     #region 预设参数方法
     public void SetDefault()
     {
+        CompileExclude = [ "TrProtocol.dll" ];
+
         DeCompileExclude =
         [
              "TShockAPI.dll",

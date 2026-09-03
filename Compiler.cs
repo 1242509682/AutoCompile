@@ -667,6 +667,22 @@ public class Compiler
                 var refs = new HashSet<string>();
                 AddTShockReferences(refs, dll);
                 AddSystemReferences(refs);
+
+                // --- 新增：过滤掉需要排除的程序集 ---
+                var exclude = AutoCompile.Config.CompileExclude ?? new List<string>();
+                if (exclude.Count > 0)
+                {
+                    // 收集需要移除的路径（比较文件名，忽略大小写）
+                    var toRemove = refs.Where(r =>
+                        exclude.Any(e => 
+                        string.Equals(Path.GetFileName(r), e, 
+                        StringComparison.OrdinalIgnoreCase))).
+                        ToList();
+
+                    foreach (var r in toRemove)
+                        refs.Remove(r);
+                }
+
                 var abRefs = new List<string>();
                 foreach (var r in refs)
                 {
